@@ -1,0 +1,146 @@
+#include "pairing.h"
+#include <mbedtls/ssl.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/pk.h>
+#include <psa/crypto.h>
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+/* Test entropy provider for the native Linux test process. */
+int mbedtls_hardware_poll(void *context, unsigned char *data, size_t size, size_t *written)
+{
+    FILE *file = fopen("/dev/urandom", "rb");
+    (void)context;
+    if (!file) return -1;
+    *written = fread(data, 1, size, file);
+    fclose(file);
+    return *written == size ? 0 : -1;
+}
+
+typedef struct {
+    unsigned char data[65536];
+    size_t used;
+} Queue;
+typedef struct { Queue *incoming, *outgoing; } Channel;
+
+static int transmit(void *context, const unsigned char *data, size_t size)
+{
+    Channel *channel = context;
+    if (size > sizeof(channel->outgoing->data) - channel->outgoing->used) return MBEDTLS_ERR_SSL_WANT_WRITE;
+    memcpy(channel->outgoing->data + channel->outgoing->used, data, size);
+    channel->outgoing->used += size;
+    return (int)size;
+}
+static int receive(void *context, unsigned char *data, size_t size)
+{
+    Channel *channel = context;
+    size_t available = channel->incoming->used;
+    if (!available) return MBEDTLS_ERR_SSL_WANT_READ;
+    if (size > available) size = available;
+    memcpy(data, channel->incoming->data, size);
+    memmove(channel->incoming->data, channel->incoming->data + size, available - size);
+    channel->incoming->used -= size;
+    return (int)size;
+}
+
+static int message(const char *text) { return pairing_message(text, strlen(text)); }
+
+int main(int argc, char **argv)
+{
+    mbedtls_x509_crt certificates[2], restored;
+    mbedtls_pk_context keys[2], restoredKey;
+    mbedtls_ssl_context ssl[2];
+    mbedtls_ssl_config config[2];
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context random;
+    Queue queues[2] = {{{0}, 0}, {{0}, 0}};
+    Channel channels[2] = {{&queues[0], &queues[1]}, {&queues[1], &queues[0]}};
+    int i, iteration, done[2] = {0, 0};
+    char code[9], reversed[9];
+    unsigned char pem[8192], buffer[256];
+    const char *pair = "{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true}}\n";
+    assert(argc == 6);
+    assert(psa_crypto_init() == PSA_SUCCESS);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&random);
+    assert(!mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, NULL, 0));
+    for (i = 0; i < 2; ++i) {
+        mbedtls_x509_crt_init(&certificates[i]);
+        mbedtls_pk_init(&keys[i]);
+        mbedtls_ssl_init(&ssl[i]);
+        mbedtls_ssl_config_init(&config[i]);
+        assert(!mbedtls_x509_crt_parse_file(&certificates[i], argv[1 + i * 2]));
+        assert(!mbedtls_pk_parse_keyfile(&keys[i], argv[2 + i * 2], NULL, mbedtls_ctr_drbg_random, &random));
+    }
+    assert(pairing_code(&certificates[0].pk, &certificates[1].pk, code));
+    assert(pairing_code(&certificates[1].pk, &certificates[0].pk, reversed));
+    assert(!strcmp(code, reversed));
+    assert(!strcmp(code, argv[5]));
+    assert(pairing_verify_peer(&certificates[0], "1234567890abcdef1234567890abcdef", MBEDTLS_X509_BADCERT_NOT_TRUSTED));
+    assert(!pairing_verify_peer(&certificates[0], "ffffffffffffffffffffffffffffffff", 0));
+    assert(!pairing_verify_peer(&certificates[0], "1234567890abcdef1234567890abcdef", MBEDTLS_X509_BADCERT_EXPIRED));
+    assert(!pairing_verify_peer(NULL, "", 0));
+    /* The protected identity payload is key PEM + certificate PEM + NUL. */
+    mbedtls_pk_init(&restoredKey);
+    mbedtls_x509_crt_init(&restored);
+    assert(!mbedtls_pk_write_key_pem(&keys[0], pem, sizeof(pem)));
+    {
+        size_t size = strlen((char *)pem);
+        FILE *file = fopen(argv[1], "rb");
+        size_t read;
+        assert(file);
+        read = fread(pem + size, 1, sizeof(pem) - size - 1, file);
+        fclose(file);
+        pem[size + read] = 0;
+        assert(!mbedtls_pk_parse_key(&restoredKey, pem, size + read + 1, NULL, 0, mbedtls_ctr_drbg_random, &random));
+        assert(!mbedtls_x509_crt_parse(&restored, pem, size + read + 1));
+        assert(!mbedtls_pk_check_pair(&restored.pk, &restoredKey, mbedtls_ctr_drbg_random, &random));
+    }
+    for (i = 0; i < 2; ++i) {
+        assert(!mbedtls_ssl_config_defaults(&config[i], i ? MBEDTLS_SSL_IS_CLIENT : MBEDTLS_SSL_IS_SERVER,
+            MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT));
+        mbedtls_ssl_conf_min_tls_version(&config[i], MBEDTLS_SSL_VERSION_TLS1_2);
+        mbedtls_ssl_conf_max_tls_version(&config[i], MBEDTLS_SSL_VERSION_TLS1_2);
+        mbedtls_ssl_conf_authmode(&config[i], MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_rng(&config[i], mbedtls_ctr_drbg_random, &random);
+        assert(!mbedtls_ssl_conf_own_cert(&config[i], &certificates[i], &keys[i]));
+        assert(!mbedtls_ssl_setup(&ssl[i], &config[i]));
+        mbedtls_ssl_set_bio(&ssl[i], &channels[i], transmit, receive, NULL);
+    }
+    for (iteration = 0; iteration < 1000 && !(done[0] && done[1]); ++iteration) {
+        for (i = 0; i < 2; ++i) {
+            int result;
+            if (done[i]) continue;
+            result = mbedtls_ssl_handshake(&ssl[i]);
+            assert(!result || result == MBEDTLS_ERR_SSL_WANT_READ || result == MBEDTLS_ERR_SSL_WANT_WRITE);
+            done[i] = result == 0;
+        }
+    }
+    assert(done[0] && done[1]);
+    assert(!strcmp(mbedtls_ssl_get_version(&ssl[0]), "TLSv1.2"));
+    assert(pairing_verify_peer(mbedtls_ssl_get_peer_cert(&ssl[1]), "1234567890abcdef1234567890abcdef", mbedtls_ssl_get_verify_result(&ssl[1])));
+    assert(mbedtls_ssl_write(&ssl[0], (const unsigned char *)pair, strlen(pair)) == (int)strlen(pair));
+    i = mbedtls_ssl_read(&ssl[1], buffer, sizeof(buffer));
+    assert(i == (int)strlen(pair) && pairing_message((char *)buffer, (size_t)i) == 1);
+    assert(message(pair) == 1);
+    assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":false}}") == -1);
+    assert(message("{\"type\":\"kdeconnect.battery\",\"body\":{}}") == 0);
+    assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true,\"pair\":false}}") == -2);
+    assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":\"true\"}}") == -2);
+    assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true}}garbage") == -2);
+    assert(message("{\"type\":\"kdeconnect.pair\\u0000\",\"body\":{\"pair\":true}}") == -2);
+    for (i = 0; i < 2; ++i) {
+        mbedtls_ssl_free(&ssl[i]);
+        mbedtls_ssl_config_free(&config[i]);
+        mbedtls_pk_free(&keys[i]);
+        mbedtls_x509_crt_free(&certificates[i]);
+    }
+    mbedtls_pk_free(&restoredKey);
+    mbedtls_x509_crt_free(&restored);
+    mbedtls_ctr_drbg_free(&random);
+    mbedtls_entropy_free(&entropy);
+    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair packets");
+    return 0;
+}

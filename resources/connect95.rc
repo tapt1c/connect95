@@ -5,8 +5,8 @@
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION 0,3,0,0
+PRODUCTVERSION 0,3,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -16,7 +16,7 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "Connect95\0"
    VALUE "ProductName", "Connect95\0"
-   VALUE "FileVersion", "0.2.0\0"
+   VALUE "FileVersion", "0.3.0\0"
   END
  END
  BLOCK "VarFileInfo"
