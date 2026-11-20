@@ -64,7 +64,7 @@ int discovery_receive(DiscoveryPeer *peer)
         if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, peer->identity.name,
                                 -1, peer->name, ARRAYSIZE(peer->name))) return 2;
     } else {
-        lstrcpyW(peer->name, L"Устройство KDE Connect");
+        lstrcpyW(peer->name, L"KDE Connect device");
     }
     snprintf(peer->address, sizeof(peer->address), "%lu.%lu.%lu.%lu",
              (address >> 24) & 255, (address >> 16) & 255, (address >> 8) & 255, address & 255);

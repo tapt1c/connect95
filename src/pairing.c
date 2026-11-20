@@ -1,4 +1,5 @@
 #include "pairing.h"
+#include "packet.h"
 #include "identity.h"
 #include "vendor/cJSON.h"
 #include <mbedtls/oid.h>
@@ -55,41 +56,19 @@ int pairing_code(mbedtls_pk_context *local, mbedtls_pk_context *remote, char cod
     return 1;
 }
 
-static int unique_keys(const cJSON *object)
-{
-    const cJSON *item, *other;
-    cJSON_ArrayForEach(item, object) {
-        for (other = item->next; other; other = other->next)
-            if (item->string && other->string && !strcmp(item->string, other->string)) return 0;
-    }
-    return 1;
-}
-
 int pairing_message(const char *line, size_t length)
 {
-    cJSON *packet;
+    cJSON *packet = packet_parse(line, length);
     const cJSON *type, *body, *pair;
-    const char *end;
-    size_t i;
     int result = -2;
-    if (!line || !length || length > IDENTITY_MAX_PACKET) return -2;
-    for (i = 0; i < length; ++i) {
-        if (!line[i] || (line[i] == '\\' && i + 5 < length && !memcmp(line + i, "\\u0000", 6))) return -2;
-    }
-    packet = cJSON_ParseWithLengthOpts(line, length, &end, 0);
     if (!packet) return -2;
-    while (end < line + length && (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t')) ++end;
     type = cJSON_GetObjectItemCaseSensitive(packet, "type");
     body = cJSON_GetObjectItemCaseSensitive(packet, "body");
-    if (end != line + length || !cJSON_IsObject(packet) || !unique_keys(packet) ||
-        !cJSON_IsObject(body) || !unique_keys(body) || !cJSON_IsString(type)) goto done;
-    if (strcmp(type->valuestring, "kdeconnect.pair")) {
-        result = 0;
-        goto done;
+    if (strcmp(type->valuestring, "kdeconnect.pair")) result = 0;
+    else {
+        pair = cJSON_GetObjectItemCaseSensitive(body, "pair");
+        if (cJSON_IsBool(pair)) result = cJSON_IsTrue(pair) ? 1 : -1;
     }
-    pair = cJSON_GetObjectItemCaseSensitive(body, "pair");
-    if (cJSON_IsBool(pair)) result = cJSON_IsTrue(pair) ? 1 : -1;
-done:
     cJSON_Delete(packet);
     return result;
 }

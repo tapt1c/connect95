@@ -1,10 +1,10 @@
 #include "session.h"
 #include "credentials.h"
 #include "pairing.h"
+#include "transport.h"
+#include "transfer.h"
 #include "vendor/cJSON.h"
 #include <mbedtls/ssl.h>
-#include <mbedtls/oid.h>
-#include <mbedtls/sha256.h>
 #include <psa/crypto.h>
 #include <process.h>
 #include <stdio.h>
@@ -13,16 +13,11 @@
 
 static CRITICAL_SECTION guard;
 static HANDLE worker, cancelEvent, confirmEvent;
-static BOOL accepted;
+static BOOL accepted, ringPending;
+static HANDLE transferCancel;
+static WCHAR pendingPath[MAX_PATH];
 static SessionStatus status;
 static DiscoveryPeer target;
-
-typedef struct {
-    SOCKET socket;
-    mbedtls_ssl_context ssl;
-    mbedtls_ssl_config config;
-    Credentials credentials;
-} Connection;
 
 static void update(int phase, const WCHAR *text)
 {
@@ -37,93 +32,80 @@ static int cancelled(void)
     return WaitForSingleObject(cancelEvent, 0) == WAIT_OBJECT_0;
 }
 
-static int net_send(void *context, const unsigned char *data, size_t size)
+static void transfer_progress(const WCHAR *filename, ULONGLONG done, ULONGLONG total)
 {
-    Connection *connection = context;
-    int result = send(connection->socket, (const char *)data, (int)size, 0);
-    if (result >= 0) return result;
-    return WSAGetLastError() == WSAEWOULDBLOCK ? MBEDTLS_ERR_SSL_WANT_WRITE : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    char numbers[96];
+    WCHAR wideNumbers[96];
+    if (total == UINT64_MAX) snprintf(numbers, sizeof(numbers), "%.2f MB", (double)done / 1048576);
+    else snprintf(numbers, sizeof(numbers), "%.2f / %.2f MB", (double)done / 1048576, (double)total / 1048576);
+    MultiByteToWideChar(CP_ACP, 0, numbers, -1, wideNumbers, ARRAYSIZE(wideNumbers));
+    EnterCriticalSection(&guard);
+    status.transferPercent = total && total != UINT64_MAX ? (int)((double)done / (double)total * 100) : 0;
+    wsprintfW(status.transferText, L"%.200s — %s", filename, wideNumbers);
+    LeaveCriticalSection(&guard);
 }
 
-static int net_receive(void *context, unsigned char *data, size_t size)
+static void transfer_finished(const WCHAR *error, const WCHAR *success)
 {
-    Connection *connection = context;
-    int result = recv(connection->socket, (char *)data, (int)size, 0);
-    if (result >= 0) return result;
-    return WSAGetLastError() == WSAEWOULDBLOCK ? MBEDTLS_ERR_SSL_WANT_READ : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    EnterCriticalSection(&guard);
+    status.transferActive = FALSE;
+    if (!error) status.transferPercent = 100;
+    lstrcpynW(status.transferText, error ? error : success, ARRAYSIZE(status.transferText));
+    LeaveCriticalSection(&guard);
 }
 
-static int connect_tcp(Connection *connection)
+static int process_commands(Connection *connection, Credentials *credentials)
 {
-    struct sockaddr_in address;
-    u_long nonblocking = 1;
-    DWORD start = GetTickCount();
-    int result, error, size = sizeof(error);
-    connection->socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (connection->socket == INVALID_SOCKET ||
-        ioctlsocket(connection->socket, FIONBIO, &nonblocking)) return 0;
-    ZeroMemory(&address, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = inet_addr(target.address);
-    address.sin_port = htons(target.identity.port);
-    result = connect(connection->socket, (struct sockaddr *)&address, sizeof(address));
-    if (!result) return 1;
-    if (WSAGetLastError() != WSAEWOULDBLOCK) return 0;
-    while (!cancelled() && (DWORD)(GetTickCount() - start) < 10000) {
-        fd_set writable, errors;
-        struct timeval timeout = {0, 100000};
-        FD_ZERO(&writable);
-        FD_ZERO(&errors);
-        FD_SET(connection->socket, &writable);
-        FD_SET(connection->socket, &errors);
-        result = select(0, NULL, &writable, &errors, &timeout);
-        if (result < 0) return 0;
-        if (result > 0) return !getsockopt(connection->socket, SOL_SOCKET, SO_ERROR,
-            (char *)&error, &size) && !error;
+    BOOL ring;
+    WCHAR path[MAX_PATH];
+    TransferContext context = {connection, credentials, &target, transferCancel, transfer_progress};
+    EnterCriticalSection(&guard);
+    ring = ringPending;
+    ringPending = FALSE;
+    lstrcpyW(path, pendingPath);
+    pendingPath[0] = 0;
+    LeaveCriticalSection(&guard);
+    if (ring) {
+        cJSON *packet = packet_create("kdeconnect.findmyphone.request");
+        int result = packet && transport_json(connection, packet, TRUE);
+        cJSON_Delete(packet);
+        if (!result) return 0;
     }
-    return 0;
+    if (path[0]) transfer_finished(transfer_send(&context, path), L"File sent to the phone.");
+    return 1;
 }
 
-static int write_bytes(Connection *connection, const char *data, size_t length, BOOL encrypted)
+static void receive_share(Connection *connection, Credentials *credentials, const ShareInfo *offer)
 {
-    DWORD start = GetTickCount();
-    while (length && !cancelled() && (DWORD)(GetTickCount() - start) < 5000) {
-        int result = encrypted ? mbedtls_ssl_write(&connection->ssl, (const unsigned char *)data, length) :
-                                 net_send(connection, (const unsigned char *)data, length);
-        if (result == MBEDTLS_ERR_SSL_WANT_READ || result == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            WaitForSingleObject(cancelEvent, 10);
-            continue;
-        }
-        if (result <= 0) return 0;
-        data += result;
-        length -= (size_t)result;
+    TransferContext context = {connection, credentials, &target, transferCancel, transfer_progress};
+    EnterCriticalSection(&guard);
+    if (status.transferActive) {
+        LeaveCriticalSection(&guard);
+        return;
     }
-    return length == 0;
+    status.transferActive = TRUE;
+    status.transferPercent = 0;
+    ResetEvent(transferCancel);
+    LeaveCriticalSection(&guard);
+    transfer_finished(transfer_receive(&context, offer), L"File saved in My Documents\\Connect95.");
 }
 
-static int write_json(Connection *connection, cJSON *packet, BOOL encrypted)
-{
-    char *text = cJSON_PrintUnformatted(packet);
-    int result;
-    if (!text) return 0;
-    result = write_bytes(connection, text, strlen(text), encrypted) &&
-             write_bytes(connection, "\n", 1, encrypted);
-    cJSON_free(text);
-    return result;
-}
-
-static cJSON *identity_packet(Connection *connection)
+static cJSON *identity_packet(Credentials *credentials)
 {
     cJSON *packet = cJSON_CreateObject();
     cJSON *body = cJSON_AddObjectToObject(packet, "body");
+    cJSON *incoming, *outgoing;
     if (!packet || !body || !cJSON_AddNumberToObject(packet, "id", (double)time(NULL) * 1000) ||
         !cJSON_AddStringToObject(packet, "type", "kdeconnect.identity") ||
-        !cJSON_AddStringToObject(body, "deviceId", connection->credentials.id) ||
+        !cJSON_AddStringToObject(body, "deviceId", credentials->id) ||
         !cJSON_AddStringToObject(body, "deviceName", "Connect95") ||
         !cJSON_AddStringToObject(body, "deviceType", "desktop") ||
         !cJSON_AddNumberToObject(body, "protocolVersion", 7) ||
-        !cJSON_AddArrayToObject(body, "incomingCapabilities") ||
-        !cJSON_AddArrayToObject(body, "outgoingCapabilities")) {
+        !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
+        !(outgoing = cJSON_AddArrayToObject(body, "outgoingCapabilities")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.share.request")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.share.request")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.findmyphone.request"))) {
         cJSON_Delete(packet);
         return NULL;
     }
@@ -137,7 +119,7 @@ static int send_pair(Connection *connection, BOOL pair)
     int result = packet && body && cJSON_AddNumberToObject(packet, "id", (double)time(NULL) * 1000) &&
         cJSON_AddStringToObject(packet, "type", "kdeconnect.pair") &&
         cJSON_AddBoolToObject(body, "pair", pair) &&
-        cJSON_AddNumberToObject(body, "timestamp", (double)time(NULL)) && write_json(connection, packet, TRUE);
+        cJSON_AddNumberToObject(body, "timestamp", (double)time(NULL)) && transport_json(connection, packet, TRUE);
     cJSON_Delete(packet);
     return result;
 }
@@ -145,6 +127,7 @@ static int send_pair(Connection *connection, BOOL pair)
 static unsigned __stdcall run_session(void *argument)
 {
     Connection connection;
+    Credentials credentials;
     WSADATA winsock;
     const mbedtls_x509_crt *peerCertificate;
     cJSON *packet = NULL;
@@ -154,78 +137,56 @@ static unsigned __stdcall run_session(void *argument)
     int result, pinned, phase = SESSION_BUSY;
     WCHAR detailedFailure[320];
     int tlsError = 0;
-    const WCHAR *failure = L"Не удалось установить соединение.";
+    const WCHAR *failure = L"Could not establish the connection.";
     (void)argument;
-    ZeroMemory(&connection, sizeof(connection));
-    connection.socket = INVALID_SOCKET;
-    credentials_init(&connection.credentials);
-    mbedtls_ssl_init(&connection.ssl);
-    mbedtls_ssl_config_init(&connection.config);
+    transport_init(&connection, cancelEvent);
+    credentials_init(&credentials);
     if (WSAStartup(MAKEWORD(2, 2), &winsock)) goto no_winsock;
     if (psa_crypto_init() != PSA_SUCCESS) goto finish;
-    update(SESSION_BUSY, L"Подготовка сертификата ПК…");
-    failure = L"Не удалось загрузить ключ ПК. Проверьте профиль пользователя и другие экземпляры Connect95.";
-    if (!credentials_load(&connection.credentials)) goto finish;
-    update(SESSION_BUSY, L"Соединение с телефоном…");
-    failure = L"Телефон недоступен по TCP. Обновите поиск на телефоне и повторите.";
-    if (!connect_tcp(&connection)) goto finish;
-    packet = identity_packet(&connection);
-    if (!packet || !write_json(&connection, packet, FALSE)) goto finish;
+    update(SESSION_BUSY, L"Preparing the PC certificate…");
+    failure = L"Cannot load the PC key. Check the user profile and other running copies of Connect95.";
+    if (!credentials_load(&credentials)) goto finish;
+    update(SESSION_BUSY, L"Connecting to the phone…");
+    failure = L"Cannot reach the phone over TCP. Refresh discovery on the phone and retry.";
+    if (!transport_connect(&connection, target.address, target.identity.port)) goto finish;
+    packet = identity_packet(&credentials);
+    if (!packet || !transport_json(&connection, packet, FALSE)) goto finish;
     cJSON_Delete(packet);
     packet = NULL;
-    update(SESSION_BUSY, L"TLS 1.2: проверка сертификата телефона…");
-    failure = L"Ошибка TLS или сертификата. Проверьте дату на ПК и телефоне.";
-    if (mbedtls_ssl_config_defaults(&connection.config, MBEDTLS_SSL_IS_SERVER,
-            MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT)) goto finish;
-    mbedtls_ssl_conf_min_tls_version(&connection.config, MBEDTLS_SSL_VERSION_TLS1_2);
-    mbedtls_ssl_conf_max_tls_version(&connection.config, MBEDTLS_SSL_VERSION_TLS1_2);
-    /* Enrollment requests a peer certificate. Trust is checked below before pairing. */
-    mbedtls_ssl_conf_authmode(&connection.config, MBEDTLS_SSL_VERIFY_OPTIONAL);
-    mbedtls_ssl_conf_rng(&connection.config, mbedtls_ctr_drbg_random, &connection.credentials.random);
-    if (mbedtls_ssl_conf_own_cert(&connection.config, &connection.credentials.certificate,
-            &connection.credentials.key) || mbedtls_ssl_setup(&connection.ssl, &connection.config)) goto finish;
-    mbedtls_ssl_set_bio(&connection.ssl, &connection, net_send, net_receive, NULL);
-    deadline = GetTickCount();
-    do {
-        result = mbedtls_ssl_handshake(&connection.ssl);
-        if (!result) break;
-        if (result != MBEDTLS_ERR_SSL_WANT_READ && result != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            tlsError = result;
-            goto finish;
-        }
-        if (cancelled() || (DWORD)(GetTickCount() - deadline) > 15000) goto finish;
-        WaitForSingleObject(cancelEvent, 10);
-    } while (1);
+    update(SESSION_BUSY, L"TLS 1.2 — checking the phone certificate…");
+    failure = L"TLS or certificate error. Check the date on both devices.";
+    tlsError = transport_tls(&connection, &credentials, target.identity.id, MBEDTLS_SSL_IS_SERVER, FALSE);
+    if (tlsError) goto finish;
     peerCertificate = mbedtls_ssl_get_peer_cert(&connection.ssl);
-    if (!pairing_verify_peer(peerCertificate, target.identity.id, mbedtls_ssl_get_verify_result(&connection.ssl))) goto finish;
-    failure = L"Сертификат телефона изменился или не удалось прочитать сохранённый сертификат. Сопряжение остановлено.";
-    pinned = credentials_pin(&connection.credentials, target.identity.id, peerCertificate, FALSE);
+    failure = L"The phone certificate changed or its saved certificate is unreadable. Pairing stopped.";
+    pinned = credentials_pin(&credentials, target.identity.id, peerCertificate, FALSE);
     if (pinned < 0) goto finish;
     if (pinned) {
         phase = SESSION_PAIRED;
-        update(phase, L"Сопряжено. TLS-соединение установлено.");
+        update(phase, L"Paired. TLS connection established.");
     } else {
-        failure = L"Не удалось отправить запрос сопряжения.";
+        failure = L"Could not send the pairing request.";
         char code[9];
-        if (!pairing_code(&connection.credentials.certificate.pk,
+        if (!pairing_code(&credentials.certificate.pk,
                 (mbedtls_pk_context *)&peerCertificate->pk, code) || !send_pair(&connection, TRUE)) goto finish;
         EnterCriticalSection(&guard);
         MultiByteToWideChar(CP_ACP, 0, code, -1, status.code, ARRAYSIZE(status.code));
         LeaveCriticalSection(&guard);
         phase = SESSION_WAIT_PHONE;
-        update(phase, L"Подтвердите сопряжение на телефоне. Сверьте код.");
+        update(phase, L"Accept pairing on the phone and compare the code.");
     }
     deadline = GetTickCount();
-    failure = L"TLS-соединение закрыто. Для повторного подключения выберите «Сопрячь / подключиться».";
+    failure = L"TLS connection closed. Select Pair / connect to reconnect.";
     while (!cancelled()) {
         unsigned char byte;
+        if (!used && phase == SESSION_PAIRED && !process_commands(&connection, &credentials)) goto finish;
         if (phase == SESSION_WAIT_PHONE && (DWORD)(GetTickCount() - deadline) > 30000) {
             send_pair(&connection, FALSE);
-            failure = L"Время ожидания сопряжения истекло. Повторите запрос.";
+            failure = L"Pairing timed out. Please try again.";
             goto finish;
         }
         if (used && (DWORD)(GetTickCount() - partialSince) > 10000) {
-            failure = L"Телефон прислал незавершённый пакет.";
+            failure = L"The phone sent an incomplete packet.";
             goto finish;
         }
         result = mbedtls_ssl_read(&connection.ssl, &byte, 1);
@@ -236,7 +197,7 @@ static unsigned __stdcall run_session(void *argument)
         if (result <= 0) goto finish;
         if (!used) partialSince = GetTickCount();
         if (!byte || used == IDENTITY_MAX_PACKET) {
-            failure = L"Некорректный или слишком большой пакет телефона.";
+            failure = L"The phone sent an invalid or oversized packet.";
             goto finish;
         }
         line[used++] = (char)byte;
@@ -244,44 +205,56 @@ static unsigned __stdcall run_session(void *argument)
         line[used] = 0;
         result = pairing_message(line, used);
         if (result == -2) {
-            failure = L"Некорректный пакет телефона.";
+            failure = L"The phone sent an invalid packet.";
             goto finish;
         }
         if (result == -1) {
-            if (!credentials_forget(&connection.credentials, target.identity.id)) {
-                failure = L"Телефон отменил сопряжение, но локальную запись удалить не удалось.";
+            if (!credentials_forget(&credentials, target.identity.id)) {
+                failure = L"The phone unpaired, but its local trust record could not be removed.";
                 goto finish;
             }
-            failure = L"Телефон отклонил или отменил сопряжение.";
+            failure = L"The phone rejected or cancelled pairing.";
             goto finish;
         }
         if (result == 1 && phase == SESSION_WAIT_PHONE) {
             HANDLE events[] = {cancelEvent, confirmEvent};
-            update(SESSION_CONFIRM, L"Телефон подтвердил запрос. Подтвердите совпадение кода на ПК.");
+            update(SESSION_CONFIRM, L"The phone accepted. Confirm the matching code on this PC.");
             if (WaitForMultipleObjects(2, events, FALSE, 60000) != WAIT_OBJECT_0 + 1 || !accepted) {
                 send_pair(&connection, FALSE);
-                failure = L"Сопряжение отменено на ПК.";
+                failure = L"Pairing cancelled on this PC.";
                 goto finish;
             }
-            if (credentials_pin(&connection.credentials, target.identity.id, peerCertificate, TRUE) != 1) {
+            if (credentials_pin(&credentials, target.identity.id, peerCertificate, TRUE) != 1) {
                 send_pair(&connection, FALSE);
-                failure = L"Не удалось сохранить сертификат телефона.";
+                failure = L"Could not save the phone certificate.";
                 goto finish;
             }
             phase = SESSION_PAIRED;
-            update(phase, L"Сопряжено. TLS-соединение установлено.");
+            update(phase, L"Paired. TLS connection established.");
+        }
+        if (result == 0 && phase == SESSION_PAIRED) {
+            ShareInfo offer;
+            cJSON *received = packet_parse(line, used);
+            int sharing = share_info(received, &offer);
+            cJSON_Delete(received);
+            if (sharing > 0) receive_share(&connection, &credentials, &offer);
+            else if (sharing < 0) transfer_finished(L"The incoming file announcement is invalid or unsupported.", NULL);
         }
         used = 0;
     }
 finish:
+    EnterCriticalSection(&guard);
+    if (status.transferActive) lstrcpyW(status.transferText, L"Transfer interrupted.");
+    status.transferActive = FALSE;
+    pendingPath[0] = 0;
+    ringPending = FALSE;
+    LeaveCriticalSection(&guard);
     cJSON_Delete(packet);
-    if (connection.socket != INVALID_SOCKET) closesocket(connection.socket);
+    transport_close(&connection);
     WSACleanup();
 no_winsock:
-    mbedtls_ssl_free(&connection.ssl);
-    mbedtls_ssl_config_free(&connection.config);
-    credentials_free(&connection.credentials);
-    if (cancelled()) update(SESSION_CLOSED, L"Соединение остановлено.");
+    credentials_free(&credentials);
+    if (cancelled()) update(SESSION_CLOSED, L"Disconnected.");
     else {
         if (tlsError) {
             wsprintfW(detailedFailure, L"%s (TLS -0x%04X)", failure, -tlsError);
@@ -297,6 +270,7 @@ void session_init(void)
     InitializeCriticalSection(&guard);
     cancelEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     confirmEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    transferCancel = CreateEventW(NULL, TRUE, FALSE, NULL);
 }
 
 void session_status(SessionStatus *snapshot)
@@ -323,7 +297,7 @@ void session_stop(void)
 
 int session_start(const DiscoveryPeer *peer)
 {
-    if (!cancelEvent || !confirmEvent || peer->identity.version != 7) return 0;
+    if (!cancelEvent || !confirmEvent || !transferCancel || peer->identity.version != 7) return 0;
     session_stop();
     ResetEvent(cancelEvent);
     ResetEvent(confirmEvent);
@@ -333,10 +307,10 @@ int session_start(const DiscoveryPeer *peer)
     ZeroMemory(&status, sizeof(status));
     strcpy(status.deviceId, peer->identity.id);
     status.phase = SESSION_BUSY;
-    lstrcpyW(status.text, L"Подключение…");
+    lstrcpyW(status.text, L"Connecting…");
     LeaveCriticalSection(&guard);
     worker = (HANDLE)_beginthreadex(NULL, 0, run_session, NULL, 0, NULL);
-    if (!worker) update(SESSION_ERROR, L"Не удалось запустить сетевой поток.");
+    if (!worker) update(SESSION_ERROR, L"Could not start the network worker.");
     return worker != NULL;
 }
 
@@ -345,6 +319,7 @@ void session_free(void)
     session_stop();
     if (cancelEvent) CloseHandle(cancelEvent);
     if (confirmEvent) CloseHandle(confirmEvent);
+    if (transferCancel) CloseHandle(transferCancel);
     DeleteCriticalSection(&guard);
 }
 
@@ -359,7 +334,41 @@ int session_forget(const DiscoveryPeer *peer)
     EnterCriticalSection(&guard);
     strcpy(status.deviceId, peer->identity.id);
     LeaveCriticalSection(&guard);
-    update(SESSION_CLOSED, result ? L"Сопряжение забыто на ПК. Можно отправить новый запрос." :
-                                 L"Не удалось удалить сопряжение из профиля пользователя.");
+    update(SESSION_CLOSED, result ? L"Pairing forgotten on this PC. You can pair again." :
+                                 L"Could not remove pairing from the user profile.");
     return result;
+}
+
+int session_ring(void)
+{
+    int ready;
+    EnterCriticalSection(&guard);
+    ready = status.phase == SESSION_PAIRED;
+    if (ready) ringPending = TRUE;
+    LeaveCriticalSection(&guard);
+    return ready;
+}
+
+int session_send_file(const WCHAR *path)
+{
+    int ready;
+    if (!path[0] || lstrlenW(path) >= MAX_PATH) return 0;
+    EnterCriticalSection(&guard);
+    ready = status.phase == SESSION_PAIRED && !status.transferActive && !pendingPath[0];
+    if (ready) {
+        lstrcpyW(pendingPath, path);
+        status.transferActive = TRUE;
+        status.transferPercent = 0;
+        lstrcpyW(status.transferText, L"Preparing to send the file…");
+        ResetEvent(transferCancel);
+    }
+    LeaveCriticalSection(&guard);
+    return ready;
+}
+
+void session_cancel_transfer(void)
+{
+    EnterCriticalSection(&guard);
+    if (status.transferActive) SetEvent(transferCancel);
+    LeaveCriticalSection(&guard);
 }

@@ -1,145 +1,119 @@
 # Connect95
 
-Клиент KDE Connect для Windows XP SP3 x86 на C и Win32.
+A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-## Текущее состояние
+Version 0.4.0 has an English interface, native Windows shell icons, a compact
+660×360 window, tray support, and an About dialog using `ShellAboutA`.
+The Pair / connect button is wider. Luna appearance follows the Windows theme.
 
-Версия 0.3.0 реализует главное окно по согласованному макету: список устройств,
-состояние подключения, три кнопки действий, область передачи файлов и меню
-«Файл», «Устройство», «Справка». Для оформления используются системная тема,
-системный шрифт и значки из `shell32.dll` установленной Windows.
-На XP используются её штатные значки компьютера, папки, поиска и документа.
-При недоступности системного значка используется встроенный значок в формате DIB.
-Начальный размер окна — 660×360, минимальный — 640×360. Чтобы получить синюю рамку Luna,
-в Windows XP должна быть включена соответствующая тема.
+## Pairing
 
-Работают сворачивание в трей, открытие двойным щелчком по значку,
-контекстное меню трея и диалог «О программе» через `ShellAboutA`.
-Крестик закрывает приложение, команда «Выход» завершает его и удаляет значок.
+1. Connect the PC and phone to the same LAN.
+2. Open Connect95 and refresh devices in KDE Connect on the phone.
+3. Select the phone and click **Pair / connect**.
+4. Accept the request on the phone, compare the eight-character code, and confirm the match on the PC.
 
-Добавлен первый сетевой этап — пассивное обнаружение по IPv4 UDP 1716.
-Принимаются объявления `kdeconnect.identity` версий 7 и 8. Устройство
-появляется в списке, при выборе отображаются имя, IP, TCP-порт и версия
-протокола. Повторные объявления обновляют запись по deviceId. Объявления,
-которым больше двух минут, отмечаются устаревшими. Список ограничен 64 записями.
+Discovery listens on IPv4 UDP 1716 and accepts protocol 7 and 8 announcements.
+TLS connections and pairing currently support **protocol 7**. Connect95 initiates
+one control connection from the PC. Incoming control connections, active discovery
+announcements, protocol 8 pairing, and automatic reconnect are pending.
 
-Добавлено исходящее TLS 1.2-соединение и сопряжение для **протокола 7**.
-Выберите найденный телефон и нажмите «Сопрячь / подключиться». Подтвердите
-запрос на телефоне, сравните восьмизначный код и подтвердите совпадение на ПК.
-Запрос ожидает ответа телефона 30 секунд. Если код отличается, отклоните его.
-При повторном подключении сохранённый сертификат проверяется до обмена
-пакетами. Изменение сертификата останавливает подключение.
+The phone certificate is pinned after confirmation. A changed certificate stops
+reconnection. **Device → Disconnect** preserves trust. **Device → Forget pairing
+on this PC…** removes the local pin, allowing a new pairing request. Compare the
+code again when pairing with a new certificate.
 
-«Устройство → Отключиться» закрывает соединение с сохранением доверия.
-«Устройство → Забыть сопряжение на ПК…» удаляет локальное доверие, позволяя
-повторить процедуру после переустановки KDE Connect на телефоне. При новом
-сопряжении снова проверьте код. При отмене сопряжения телефоном локальная
-запись удаляется после получения соответствующего пакета.
+## Files and find phone
 
-Обнаружение поддерживает версии 7 и 8. Сопряжение с версией 8 ещё предстоит
-реализовать. Поддерживается одно исходящее TCP/TLS-соединение за раз.
-Connect95 принимает UDP-объявления, собственные объявления не отправляет,
-входящие TCP-подключения пока не принимает. Подключение инициируется с ПК.
-Плагины передачи файлов, поиска телефона, батареи и буфера обмена ещё
-не реализованы, их кнопки недоступны.
+After connecting, **Send file** opens the native Windows file picker.
+**Find phone** sends `kdeconnect.findmyphone.request` to the paired phone.
+The phone's KDE Connect plugins must be enabled for these features.
 
-### Совместимость с Windows XP
+To receive a file, share it from Android using KDE Connect and choose Connect95.
+Files are saved under **My Documents\Connect95**. Existing files are preserved,
+with numbered names used for collisions. Files are received into temporary
+`.part` files, checked for completeness, and renamed after saving. Failed or
+cancelled transfers remove their temporary file. Files are never opened automatically.
 
-Цель сборки — XP SP3 x86. Mbed TLS 3.6.8 включена статически в EXE,
-используется TLS 1.2. Генератор энтропии подключён к CryptoAPI
-(`CryptGenRandom`), приватный ключ защищён пользовательской DPAPI
-(`CryptProtectData`). Обновление системного TLS для приложения не требуется.
-Системные часы должны показывать правильную дату для проверки сертификатов.
+A separate TLS 1.2 connection carries each file. Its certificate must match the
+paired phone. Transfers support binary data, Unicode names within XP path limits,
+empty files, 64-bit sizes, and unknown-length streams with an authenticated TLS
+end-of-stream. The interface displays progress and provides **Cancel**.
 
-Сертификат и ключ ПК создаются при первом подключении. Защищённый ключ и
-сертификат хранятся в `%APPDATA%\Connect95\identity.dat`, сертификаты телефонов —
-в `peer-<deviceId>.der`. Нельзя переносить `identity.dat` в другой профиль,
-DPAPI привязана к пользователю Windows. Повреждённый или недоступный ключ
-автоматически не заменяется. Работа с профилем блокируется для параллельного
-экземпляра, запись файлов происходит через временный файл и атомарную замену.
+Files are processed sequentially. A find-phone request made during a transfer is
+queued until that transfer completes. For reliable transfers, start one direction
+at a time. Clipboard synchronization and battery reporting are pending.
 
-Проверены сборка x86, регрессии импортов XP, TLS 1.2 на двух тестовых концах,
-проверка сертификатов, формула кода Android/KDE Connect v7 и разбор пакетов.
-Сетевой тест использует транспорт в памяти на Linux. Сопряжение с реальным
-Android, работа сокетов и DPAPI на XP/современной Windows пока не проверены.
+Allow incoming UDP 1716 for discovery and incoming TCP 1739–1764 for sending
+files from the PC. File downloads connect to the paired phone's announced port.
+Restrict the application firewall exception to the local network.
 
-### Проверка обнаружения на XP
+After upgrading, close the old executable, start the new one, and reconnect so
+Android receives the updated plugin capabilities. Existing pairing is stored in
+the user profile and can be reused.
 
-1. Подключить ПК и телефон к одной локальной сети без изоляции Wi-Fi клиентов.
-2. Разрешить входящий UDP 1716 для Connect95 в брандмауэре, ограничив исключение локальной подсетью.
-3. Запустить Connect95, открыть официальный KDE Connect на телефоне и обновить список устройств.
-4. Телефон должен появиться в списке Connect95. Выбрать его для просмотра адреса и версии.
-5. Повторить обновление на телефоне, убедиться, что запись остаётся одна.
-6. Если UDP-порт занят другим клиентом, закрыть его и выбрать «Устройство → Начать поиск устройств».
+## Windows XP support
 
-Connect95 становится видимым на телефоне после исходящего подключения с ПК.
-Приём реальных объявлений на XP/Android и прохождение брандмауэра необходимо
-проверить на устройствах. Автотесты проверяют разбор сетевых пакетов на Linux.
+TLS 1.2 is provided by statically linked Mbed TLS 3.6.8. Randomness comes from
+CryptoAPI (`CryptGenRandom`), and the local private key is protected using
+user-scoped DPAPI (`CryptProtectData`). System TLS updates are unnecessary for
+this application. The system date must be correct for certificate validation.
 
-Правила UDP сверены с `DeviceInfo` и `LanLinkProvider` официальной реализации
-KDE Connect, коммит `6fa6dac15f1019bff6a922cf3014e222f5140f66`.
-[Исходники протокола](https://github.com/KDE/kdeconnect-kde/tree/6fa6dac15f1019bff6a922cf3014e222f5140f66/core)
+The identity is generated on first connection and stored in
+`%APPDATA%\Connect95\identity.dat`. Phone certificates use `peer-<deviceId>.der`
+in the same directory. DPAPI binds the identity to its Windows user profile.
+Unreadable identities are preserved for recovery. Profile access is locked against
+concurrent clients, and identity and pin writes use atomic replacement.
 
-## Сборка
+Discovery and protocol 7 pairing have been reported working by the user.
+Version 0.4.0 file transfer, ringing, dialogs, and filesystem handling still need
+validation with a real Windows/Android pair. Automated TLS tests use an in-memory
+transport on Linux. Import checks catch known XP-incompatible dependencies.
 
-Нужны GNU Make 4.3+, Git, Python 3, Perl и MinGW-w64 с целевым компилятором i686 и классическим
-MSVCRT. Системные DLL предоставляют Win32 API, Mbed TLS включается статически.
+## Build
 
-На Debian/Ubuntu:
+Requires GNU Make 4.3+, Git, Python 3, Perl, and MinGW-w64 targeting i686 with MSVCRT.
 
 ```sh
 sudo apt-get install make git python3 perl gcc-mingw-w64-i686 binutils-mingw-w64-i686
 make
 ```
 
-Первая сборка скачивает Mbed TLS 3.6.8 и её framework в `.deps/mbedtls`,
-проверяет зафиксированный коммит `82e69999f91126589a28b70dd75b69fbcabe2711`
-и собирает библиотеку с настройками XP. Нужен доступ к `github.com`.
-Результат — `build/connect95.exe`. В Windows можно собрать тем же Makefile
-из оболочки с установленным кросс-компилятором либо указать имена инструментов:
+The first build fetches Mbed TLS 3.6.8 and its framework into `.deps/mbedtls`.
+The source commit is pinned to `82e69999f91126589a28b70dd75b69fbcabe2711`.
+Access to `github.com` is required. The output is `build/connect95.exe`.
+The executable uses system Win32 DLLs and statically linked Mbed TLS.
+
+From a Windows shell with a compatible 32-bit MinGW toolchain and Make:
 
 ```sh
 make CC=gcc WINDRES=windres AR=ar
 ```
 
-Компилятор должен выпускать 32-битные PE-файлы с MSVCRT, а не UCRT.
-В Makefile заданы Win32 API и версия подсистемы 5.1. Это целевые ограничения,
-фактическую совместимость необходимо подтвердить запуском на XP SP3.
+The toolchain must target MSVCRT. The Makefile selects Win32 API and PE subsystem
+version 5.1. Runtime compatibility requires testing on XP SP3.
 
-## Ручная проверка
-
-1. Запустить EXE на XP SP3 с включённой темой Luna.
-2. Проверить русские подписи, значки и изменение размеров окна.
-3. Открыть «Справка → О программе…» и закрыть системный диалог.
-4. Свернуть окно, открыть его двойным щелчком по значку в трее.
-5. Проверить контекстное меню трея и завершение через «Выход».
-6. Запустить ещё раз и закрыть крестиком. Значок должен исчезнуть.
-
-Тексты интерфейса используют Unicode Win32. Текст `ShellAboutA` пока английский,
-чтобы корректно отображаться и на системах с другой ANSI-кодовой страницей.
-
-## Тесты разбора пакетов
+## Validation
 
 ```sh
 make test
-```
-
-Проверяются поля identity, допустимые порты, Unicode, усечённые пакеты,
-повторные ключи, NUL и повреждённый JSON. Для JSON используется cJSON 1.7.19
-(коммит `c859b25da02955fef659d658b8f324b5cde87be3`), лицензия MIT находится
-в `src/vendor/cJSON.LICENSE`. Глубина JSON ограничена 32, размер объявления — 8 КиБ.
-
-## Проверки TLS и сопряжения
-
-```sh
 make test-pairing
 python3 tests/check_xp_imports.py i686-w64-mingw32-objdump build/connect95.exe
 ```
 
-`test-pairing` требует нативный C-компилятор, OpenSSL CLI и Python 3.
-Собирает отдельную нативную Mbed TLS в `.deps/mbedtls-host`, создаёт временные
-сертификаты, проверяет TLS 1.2, чтение объединённого PEM, несовпадение CN,
-ошибки проверки сертификата, независимый расчёт кода и некорректные пакеты pair.
+The pairing tests require a native C compiler, OpenSSL CLI, and Python 3. They
+build native Mbed TLS in `.deps/mbedtls-host` and generate temporary certificates.
+Tests cover TLS 1.2, binary payloads in both directions, verification codes checked
+against an independent hash, certificate identity errors, PEM reloading, malformed
+packets, file metadata, empty files, large sizes, and unsafe Windows filenames.
 
-Mbed TLS используется по Apache-2.0. Тексты лицензий Mbed TLS и cJSON
-поставляются в `releases/THIRD-PARTY-NOTICES.txt`.
+Manual checks cover pairing, reconnect, file transfer in both directions, empty
+and large files, non-ASCII names, repeated names, cancellation, disconnect during
+transfer, finding the phone, menu actions, tray restore, and the About dialog.
+
+The protocol was checked against KDE Connect sources at commit
+`6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.
+[Upstream protocol sources](https://github.com/KDE/kdeconnect-kde/tree/6fa6dac15f1019bff6a922cf3014e222f5140f66/core)
+
+Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
+License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.

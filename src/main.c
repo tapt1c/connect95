@@ -2,6 +2,7 @@
 #include "session.h"
 #include <commctrl.h>
 #include <shellapi.h>
+#include <commdlg.h>
 #include <string.h>
 
 #define ID_EXIT 200
@@ -16,11 +17,12 @@
 #define ID_PAIR 221
 #define ID_DISCONNECT 222
 #define ID_FORGET 223
+#define ID_CANCEL_TRANSFER 224
 #define MAX_PEERS 64
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton, pairButton;
-static HWND clipboardButton, transferBox, transferText, progress, statusBar;
+static HWND clipboardButton, transferBox, transferText, progress, statusBar, cancelTransferButton;
 static HFONT normalFont, titleFont;
 static HICON icons[4];
 static NOTIFYICONDATAW tray;
@@ -33,31 +35,43 @@ static void showPeer(void)
 {
     WCHAR description[256];
     SessionStatus session;
+    BOOL paired;
     int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    session_status(&session);
+    paired = selected >= 0 && selected < peerCount && session.phase == SESSION_PAIRED &&
+             !strcmp(session.deviceId, peers[selected].identity.id);
+    EnableWindow(sendButton, paired && !session.transferActive);
+    EnableWindow(ringButton, paired);
+    EnableWindow(cancelTransferButton, paired && session.transferActive);
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND, MF_BYCOMMAND | (paired && !session.transferActive ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_RING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     if (selected < 0 || selected >= peerCount) {
         EnableWindow(pairButton, FALSE);
         SetWindowTextW(heading, L"Connect95");
-        SetWindowTextW(state, L"Нет выбранного устройства");
+        SetWindowTextW(state, L"No device selected");
         return;
     }
     SetWindowTextW(heading, peers[selected].name);
     EnableWindow(pairButton, peers[selected].identity.version == 7);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_PAIR, MF_BYCOMMAND |
                    (peers[selected].identity.version == 7 ? MF_ENABLED : MF_GRAYED));
-    session_status(&session);
     if (!strcmp(session.deviceId, peers[selected].identity.id) && session.phase != SESSION_IDLE) {
         SetWindowTextW(state, session.text);
+        SetWindowTextW(transferText, session.transferText[0] ? session.transferText : L"No active transfers");
+        SendMessageW(progress, PBM_SETPOS, session.transferPercent, 0);
         if (session.code[0] && (session.phase == SESSION_WAIT_PHONE || session.phase == SESSION_CONFIRM)) {
-            wsprintfW(description, L"Код сопряжения: %s — сверьте с телефоном", session.code);
+            wsprintfW(description, L"Pairing code %s — compare it with your phone", session.code);
             SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
         } else SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)session.text);
         return;
     }
+    SetWindowTextW(transferText, L"No active transfers");
+    SendMessageW(progress, PBM_SETPOS, 0, 0);
     if ((DWORD)(GetTickCount() - peers[selected].seen) > 120000)
-        SetWindowTextW(state, L"Объявление устарело. Обновите поиск на телефоне.");
+        SetWindowTextW(state, L"Discovery is stale. Refresh devices on the phone.");
     else
-        SetWindowTextW(state, L"Обнаружено. Соединение не установлено.");
-    wsprintfW(description, L"%hs:%u · Протокол %d · Без сопряжения",
+        SetWindowTextW(state, L"Discovered. Not connected.");
+    wsprintfW(description, L"%hs:%u · Protocol %d · Not paired",
               peers[selected].address, peers[selected].identity.port,
               peers[selected].identity.version);
     SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
@@ -68,11 +82,38 @@ static void pairSelected(HWND window)
     int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
     if (selected < 0 || selected >= peerCount) return;
     if (peers[selected].identity.version != 7) {
-        MessageBoxW(window, L"В этой версии сопряжение поддерживает протокол 7. Поддержка версии 8 ещё разрабатывается.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(window, L"This release supports pairing with protocol 7. Protocol 8 pairing is under development.", L"Connect95", MB_OK | MB_ICONINFORMATION);
         return;
     }
     if (!session_start(&peers[selected]))
-        MessageBoxW(window, L"Не удалось начать подключение.", L"Connect95", MB_OK | MB_ICONERROR);
+        MessageBoxW(window, L"Could not start the connection.", L"Connect95", MB_OK | MB_ICONERROR);
+    showPeer();
+}
+
+static BOOL pairedSelection(void)
+{
+    SessionStatus snapshot;
+    int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    session_status(&snapshot);
+    return selected >= 0 && selected < peerCount && snapshot.phase == SESSION_PAIRED &&
+           !strcmp(snapshot.deviceId, peers[selected].identity.id);
+}
+
+static void sendFile(HWND window)
+{
+    OPENFILENAMEW dialog;
+    WCHAR path[MAX_PATH] = L"";
+    if (!pairedSelection()) return;
+    ZeroMemory(&dialog, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = window;
+    dialog.lpstrFilter = L"All files\0*.*\0\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = ARRAYSIZE(path);
+    dialog.lpstrTitle = L"Send file to phone";
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    if (GetOpenFileNameW(&dialog) && pairedSelection() && !session_send_file(path))
+        MessageBoxW(window, L"A transfer is already in progress or the connection has closed.", L"Connect95", MB_OK | MB_ICONINFORMATION);
     showPeer();
 }
 
@@ -85,8 +126,8 @@ static void pollSession(HWND window)
     if (snapshot.phase != SESSION_CONFIRM) confirmationShown = FALSE;
     if (snapshot.phase == SESSION_CONFIRM && !confirmationShown) {
         confirmationShown = TRUE;
-        wsprintfW(question, L"Код сопряжения: %s\n\nСовпадает ли он с кодом на телефоне?\nСохраняйте сопряжение только при совпадении кодов.", snapshot.code);
-        session_confirm(MessageBoxW(window, question, L"Connect95 — проверка устройства",
+        wsprintfW(question, L"Pairing code %s\n\nDoes it match the code on your phone?\nConfirm only when both codes match.", snapshot.code);
+        session_confirm(MessageBoxW(window, question, L"Connect95 — verify device",
             MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES);
     }
     showPeer();
@@ -97,11 +138,11 @@ static void startDiscovery(HWND window)
     WCHAR errorText[160];
     int error = discovery_start(window, WM_DISCOVERY);
     if (error) {
-        wsprintfW(errorText, L"UDP 1716 недоступен (ошибка %d). Повторите поиск через меню «Устройство».", error);
+        wsprintfW(errorText, L"UDP 1716 is unavailable (error %d). Restart discovery from the Device menu.", error);
         SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)errorText);
     } else {
         SendMessageW(statusBar, SB_SETTEXTW, 0,
-            (LPARAM)L"UDP 1716: ожидание. Обновите список устройств в KDE Connect на телефоне.");
+            (LPARAM)L"Listening on UDP 1716. Refresh devices in KDE Connect on your phone.");
     }
 }
 
@@ -115,7 +156,7 @@ static void receiveDiscovery(void)
         result = discovery_receive(&peer);
         if (result <= 0) {
             if (result < 0) SendMessageW(statusBar, SB_SETTEXTW, 0,
-                (LPARAM)L"Ошибка приёма UDP. Повторите поиск через меню «Устройство».");
+                (LPARAM)L"UDP receive error. Restart discovery from the Device menu.");
             break;
         }
         if (result != 1) continue;
@@ -173,20 +214,20 @@ static HMENU createMenu(void)
     HMENU file = CreatePopupMenu();
     HMENU device = CreatePopupMenu();
     HMENU help = CreatePopupMenu();
-    AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, L"Отправить файл…");
+    AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, L"Send file…");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(file, MF_STRING, ID_EXIT, L"Выход");
-    AppendMenuW(device, MF_STRING, ID_DISCOVERY, L"Начать поиск устройств");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_PAIR, L"Сопрячь / подключиться");
-    AppendMenuW(device, MF_STRING, ID_DISCONNECT, L"Отключиться");
-    AppendMenuW(device, MF_STRING, ID_FORGET, L"Забыть сопряжение на ПК…");
+    AppendMenuW(file, MF_STRING, ID_EXIT, L"Exit");
+    AppendMenuW(device, MF_STRING, ID_DISCOVERY, L"Start discovery");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_PAIR, L"Pair / connect");
+    AppendMenuW(device, MF_STRING, ID_DISCONNECT, L"Disconnect");
+    AppendMenuW(device, MF_STRING, ID_FORGET, L"Forget pairing on this PC…");
     AppendMenuW(device, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Найти телефон");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_CLIPBOARD, L"Буфер обмена");
-    AppendMenuW(help, MF_STRING, ID_ABOUT, L"О программе…");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"Файл");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, L"Устройство");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"Справка");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Find phone");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_CLIPBOARD, L"Clipboard");
+    AppendMenuW(help, MF_STRING, ID_ABOUT, L"About…");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"File");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, L"Device");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"Help");
     return menu;
 }
 
@@ -214,10 +255,10 @@ static void trayMenu(HWND window)
 {
     POINT position;
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, ID_SHOW, L"Открыть Connect95");
-    AppendMenuW(menu, MF_STRING, ID_ABOUT, L"О программе…");
+    AppendMenuW(menu, MF_STRING, ID_SHOW, L"Open Connect95");
+    AppendMenuW(menu, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(menu, MF_STRING, ID_EXIT, L"Выход");
+    AppendMenuW(menu, MF_STRING, ID_EXIT, L"Exit");
     SetMenuDefaultItem(menu, ID_SHOW, FALSE);
     GetCursorPos(&position);
     SetForegroundWindow(window);
@@ -243,14 +284,15 @@ static void layout(HWND window)
     MoveWindow(devices, 8, 8, left, height - 16, TRUE);
     MoveWindow(heading, rightX + 44, 12, rightWidth - 44, 25, TRUE);
     MoveWindow(state, rightX + 44, 43, rightWidth - 44, 30, TRUE);
-    MoveWindow(battery, rightX + 44, 72, rightWidth - 190, 21, TRUE);
-    MoveWindow(pairButton, rightX + rightWidth - 140, 68, 140, 25, TRUE);
+    MoveWindow(battery, rightX + 44, 72, rightWidth - 220, 21, TRUE);
+    MoveWindow(pairButton, rightX + rightWidth - 170, 68, 170, 25, TRUE);
     MoveWindow(sendButton, rightX, buttonY, buttonWidth, 72, TRUE);
     MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 72, TRUE);
     MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
                buttonY, rightWidth - (buttonWidth + 6) * 2, 72, TRUE);
     MoveWindow(transferBox, rightX, 188, rightWidth, height - 196, TRUE);
-    MoveWindow(transferText, rightX + 12, 210, rightWidth - 24, 22, TRUE);
+    MoveWindow(transferText, rightX + 12, 210, rightWidth - 100, 30, TRUE);
+    MoveWindow(cancelTransferButton, rightX + rightWidth - 76, 207, 64, 24, TRUE);
     MoveWindow(progress, rightX + 12, 240, rightWidth - 24, 16, TRUE);
     InvalidateRect(window, NULL, TRUE);
 }
@@ -301,26 +343,27 @@ static BOOL createControls(HWND window)
     ListView_SetExtendedListViewStyle(devices, LVS_EX_FULLROWSELECT);
     ZeroMemory(&column, sizeof(column));
     column.mask = LVCF_TEXT | LVCF_WIDTH;
-    column.pszText = L"Устройства";
+    column.pszText = L"Devices";
     column.cx = 125;
     SendMessageW(devices, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
     heading = control(window, L"STATIC", L"Connect95", SS_LEFT, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
-    state = control(window, L"STATIC", L"Нет подключённых устройств", SS_LEFT, 0);
-    battery = control(window, L"STATIC", L"Заряд батареи —", SS_LEFT, 0);
-    pairButton = control(window, L"BUTTON", L"Сопрячь / подключиться", BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_PAIR);
-    sendButton = control(window, L"BUTTON", L"Отправить файл", BS_OWNERDRAW | WS_DISABLED, ID_SEND);
-    ringButton = control(window, L"BUTTON", L"Найти телефон", BS_OWNERDRAW | WS_DISABLED, ID_RING);
-    clipboardButton = control(window, L"BUTTON", L"Буфер обмена", BS_OWNERDRAW | WS_DISABLED, ID_CLIPBOARD);
-    transferBox = control(window, L"BUTTON", L"Передача файлов", BS_GROUPBOX, 0);
-    transferText = control(window, L"STATIC", L"Нет активных передач", SS_LEFT, 0);
+    state = control(window, L"STATIC", L"No connected devices", SS_LEFT, 0);
+    battery = control(window, L"STATIC", L"Battery —", SS_LEFT, 0);
+    pairButton = control(window, L"BUTTON", L"Pair / connect", BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_PAIR);
+    sendButton = control(window, L"BUTTON", L"Send file", BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_SEND);
+    ringButton = control(window, L"BUTTON", L"Find phone", BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_RING);
+    clipboardButton = control(window, L"BUTTON", L"Clipboard", BS_OWNERDRAW | WS_DISABLED, ID_CLIPBOARD);
+    transferBox = control(window, L"BUTTON", L"File transfers", BS_GROUPBOX, 0);
+    transferText = control(window, L"STATIC", L"No active transfers", SS_LEFT, 0);
+    cancelTransferButton = control(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_CANCEL_TRANSFER);
     progress = control(window, PROGRESS_CLASSW, L"", 0, 0);
     statusBar = control(window, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0);
     SendMessageW(statusBar, SB_SETTEXTW, 0,
-        (LPARAM)L"  Интерфейс готов. Поддержка KDE Connect в разработке.");
+        (LPARAM)L"  Ready.");
     return normalFont && titleFont && devices && heading && state && battery &&
         pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
-        progress && statusBar;
+        cancelTransferButton && progress && statusBar;
 }
 
 static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -356,7 +399,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     }
     case WM_DISCOVERY:
         if (WSAGETSELECTERROR(lParam)) {
-            SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)L"Ошибка UDP. Повторите поиск через меню «Устройство».");
+            SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)L"UDP error. Restart discovery from the Device menu.");
         } else if (WSAGETSELECTEVENT(lParam) == FD_READ) receiveDiscovery();
         return 0;
     case WM_TIMER:
@@ -368,10 +411,13 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_SEND: sendFile(window); break;
+        case ID_RING: if (pairedSelection()) session_ring(); break;
+        case ID_CANCEL_TRANSFER: session_cancel_transfer(); break;
         case ID_FORGET: {
             int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
             if (selected >= 0 && selected < peerCount &&
-                MessageBoxW(window, L"Удалить сохранённый сертификат выбранного устройства на этом ПК?",
+                MessageBoxW(window, L"Remove the saved certificate for the selected device on this PC?",
                     L"Connect95", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
                 session_forget(&peers[selected]);
                 showPeer();
@@ -384,10 +430,10 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.3.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.4.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
-                "TLS 1.2 pairing v7. Mbed TLS 3.6.8, cJSON.", icons[0]);
+                "Files and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
             break;
         }
         return 0;
@@ -441,7 +487,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     window = CreateWindowExW(0, cls.lpszClassName, L"Connect95", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 660, 360, NULL, createMenu(), instance, NULL);
     if (!window) {
-        MessageBoxW(NULL, L"Не удалось создать окно Connect95.", L"Connect95", MB_ICONERROR);
+        MessageBoxW(NULL, L"Could not create the Connect95 window.", L"Connect95", MB_ICONERROR);
         return 1;
     }
     ShowWindow(window, show);

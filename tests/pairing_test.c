@@ -1,4 +1,5 @@
 #include "pairing.h"
+#include "share_info.h"
 #include <mbedtls/ssl.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
@@ -47,6 +48,51 @@ static int receive(void *context, unsigned char *data, size_t size)
 
 static int message(const char *text) { return pairing_message(text, strlen(text)); }
 
+static int offer(const char *json, ShareInfo *info)
+{
+    cJSON *packet = packet_parse(json, strlen(json));
+    int result = packet ? share_info(packet, info) : -1;
+    cJSON_Delete(packet);
+    return result;
+}
+
+static void test_sharing(void)
+{
+    ShareInfo info;
+    cJSON *generated;
+    char json[1600];
+    const char *invalidNames[] = {"../photo.jpg", "..", "C:photo.jpg", "a/b", "a\\b", "NUL", "con.txt", "COM1.bin", "LPT9", "photo.", "photo ", "", "a*", "a?"};
+    size_t i;
+    generated = share_packet("photo.jpg", 4294967297ULL, 1739);
+    assert(generated && share_info(generated, &info) == 1);
+    assert(info.size == 4294967297ULL && info.port == 1739 && !strcmp(info.filename, "photo.jpg"));
+    cJSON_Delete(generated);
+    generated = share_packet("empty.txt", 0, 0);
+    assert(generated && share_info(generated, &info) == 1 && !info.port && !info.size);
+    cJSON_Delete(generated);
+    generated = packet_create("kdeconnect.findmyphone.request");
+    assert(generated && cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(generated, "body")));
+    assert(!strcmp(cJSON_GetObjectItemCaseSensitive(generated, "type")->valuestring, "kdeconnect.findmyphone.request"));
+    cJSON_Delete(generated);
+    assert(share_filename_valid("photo.jpg"));
+    assert(share_filename_valid(".hidden"));
+    assert(share_filename_valid("photo \xe2\x98\x83.jpg"));
+    for (i = 0; i < sizeof(invalidNames) / sizeof(invalidNames[0]); ++i) assert(!share_filename_valid(invalidNames[i]));
+    assert(offer("{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"empty.txt\"},\"payloadSize\":0}", &info) == 1);
+    assert(info.size == 0 && info.port == 0 && !info.unknownSize);
+    assert(offer("{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"data.bin\"},\"payloadSize\":4294967297,\"payloadTransferInfo\":{\"port\":1739}}", &info) == 1);
+    assert(info.size == 4294967297ULL && info.port == 1739);
+    assert(offer("{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"data.bin\"},\"payloadSize\":-1,\"payloadTransferInfo\":{\"port\":1739}}", &info) == 1 && info.unknownSize);
+    assert(offer("{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"data.bin\"},\"payloadSize\":1}", &info) == -1);
+    assert(offer("{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"data.bin\"},\"payloadSize\":1,\"payloadTransferInfo\":{\"port\":1739,\"port\":1740}}", &info) == -1);
+    for (i = 0; i < 5; ++i) {
+        const char *sizes[] = {"-2", "0.5", "9007199254740992", "\"123\"", "null"};
+        snprintf(json, sizeof(json), "{\"type\":\"kdeconnect.share.request\",\"body\":{\"filename\":\"a\"},\"payloadSize\":%s,\"payloadTransferInfo\":{\"port\":1739}}", sizes[i]);
+        assert(offer(json, &info) == -1);
+    }
+    assert(offer("{\"type\":\"kdeconnect.findmyphone.request\",\"body\":{}}", &info) == 0);
+}
+
 int main(int argc, char **argv)
 {
     mbedtls_x509_crt certificates[2], restored;
@@ -62,6 +108,7 @@ int main(int argc, char **argv)
     unsigned char pem[8192], buffer[256];
     const char *pair = "{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true}}\n";
     assert(argc == 6);
+    test_sharing();
     assert(psa_crypto_init() == PSA_SUCCESS);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&random);
@@ -131,6 +178,24 @@ int main(int argc, char **argv)
     assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":\"true\"}}") == -2);
     assert(message("{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true}}garbage") == -2);
     assert(message("{\"type\":\"kdeconnect.pair\\u0000\",\"body\":{\"pair\":true}}") == -2);
+    /* Binary payloads across record boundaries in both TLS directions. */
+    for (i = 0; i < 2; ++i) {
+        unsigned char binary[16384], received[16384];
+        int chunk;
+        for (chunk = 0; chunk < 20; ++chunk) {
+            size_t offset = 0, j;
+            for (j = 0; j < sizeof(binary); ++j) binary[j] = (unsigned char)(j + chunk);
+            assert(mbedtls_ssl_write(&ssl[i], binary, sizeof(binary)) == (int)sizeof(binary));
+            while (offset < sizeof(binary)) {
+                int read = mbedtls_ssl_read(&ssl[1 - i], received + offset, sizeof(binary) - offset > 997 ? 997 : sizeof(binary) - offset);
+                assert(read > 0 && offset + (size_t)read <= sizeof(binary));
+                offset += (size_t)read;
+            }
+            assert(!memcmp(binary, received, sizeof(binary)));
+        }
+    }
+    assert(!mbedtls_ssl_close_notify(&ssl[0]));
+    assert(mbedtls_ssl_read(&ssl[1], buffer, sizeof(buffer)) == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY);
     for (i = 0; i < 2; ++i) {
         mbedtls_ssl_free(&ssl[i]);
         mbedtls_ssl_config_free(&config[i]);
@@ -141,6 +206,6 @@ int main(int argc, char **argv)
     mbedtls_x509_crt_free(&restored);
     mbedtls_ctr_drbg_free(&random);
     mbedtls_entropy_free(&entropy);
-    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair packets");
+    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair/share packets, bidirectional binary payloads");
     return 0;
 }
