@@ -2,9 +2,9 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.5.0 has an English interface, native Windows shell icons, a compact
+Version 0.6.0 has an English interface, native Windows shell icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
-The Pair / connect button is wider. Luna appearance follows the Windows theme.
+The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
 
 ## Pairing
 
@@ -22,6 +22,26 @@ The phone certificate is pinned after confirmation. A changed certificate stops
 reconnection. **Device → Disconnect** preserves trust. **Device → Forget pairing
 on this PC…** removes the local pin, allowing a new pairing request. Compare the
 code again when pairing with a new certificate.
+
+## Saved devices
+
+The native Win32 tree contains **Saved devices** and **Discovered devices** groups.
+Phone icons come from the Windows telephony resources, with an embedded XP-compatible
+phone icon used when necessary. Saved devices remain visible after restart and show
+an offline marker until discovery or a successful connection in the current run.
+
+Group membership follows the saved `peer-<deviceId>.der` certificates. Names and
+last-known endpoints are cached separately in `peer-<deviceId>.json`. Connection
+authentication continues to verify the pinned certificate during TLS.
+
+Pairing moves a discovered device into the saved group. Forgetting pairing removes
+it from that group. A recently discovered device remains in the discovered group.
+Saved devices can try connecting using their remembered address. Refresh discovery
+on the phone when its address changes.
+
+Pairings from older versions initially use a name such as **Phone 12345678**.
+Their names and endpoints are remembered after the next discovery announcement.
+Unreadable metadata falls back to the ID-based name and waits for discovery.
 
 ## Files and find phone
 
@@ -60,8 +80,13 @@ status. Battery updates are accepted only from the paired TLS connection.
 The **Clipboard** button opens a menu with these actions.
 
 - **Send PC clipboard to phone** sends the current plain-text clipboard.
-- **Apply latest phone clipboard** copies the latest text received from the phone onto the PC clipboard.
+- **Paste phone clipboard to PC** copies the latest text received from the phone onto the Windows clipboard. Paste it into any application using Ctrl+V.
 - **Sync text clipboard automatically** enables two-way synchronization for this connection.
+
+The same paste action is available from **Edit → Paste phone clipboard to PC**,
+or **Ctrl+Shift+V** while Connect95 is focused. First use KDE Connect's explicit
+**Send clipboard** action on the phone if Android restricts background reading.
+The paste action becomes available after text arrives from the paired phone.
 
 Automatic synchronization defaults to off and resets on reconnect. Manual
 clipboard actions remain available while synchronization is off. Incoming
@@ -89,7 +114,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.5.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.6.0 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
@@ -135,7 +160,8 @@ Manual checks cover pairing, reconnect, file transfer in both directions, empty
 and large files, non-ASCII names, repeated names, cancellation, disconnect during
 transfer, finding the phone, battery/charging updates, clipboard actions in both directions,
 automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
-and the About dialog.
+the About dialog, saved-device persistence across restart, offline selection,
+group migration after pairing/forgetting, and Ctrl+Shift+V clipboard import.
 
 The protocol was checked against KDE Connect sources at commit
 `6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.

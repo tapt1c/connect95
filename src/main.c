@@ -1,6 +1,7 @@
 #include "discovery.h"
 #include "session.h"
 #include "clipboard.h"
+#include "saved_devices.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -23,6 +24,7 @@
 #define ID_SYNC_CLIPBOARD 226
 #define ID_SEND_CLIPBOARD 227
 #define MAX_PEERS 64
+#define DEVICE_PANE_WIDTH 175
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton, pairButton;
@@ -34,6 +36,79 @@ static BOOL trayAdded;
 static UINT taskbarCreated;
 static DiscoveryPeer peers[MAX_PEERS];
 static int peerCount;
+static HTREEITEM savedGroup, discoveredGroup, peerNodes[MAX_PEERS];
+static BOOL peerSaved[MAX_PEERS], peerSeen[MAX_PEERS], peerConnected[MAX_PEERS];
+static HIMAGELIST deviceImages;
+
+static int selectedPeer(void)
+{
+    TVITEMW item;
+    ZeroMemory(&item, sizeof(item));
+    item.mask = TVIF_PARAM;
+    item.hItem = TreeView_GetSelection(devices);
+    if (!item.hItem || !SendMessageW(devices, TVM_GETITEMW, 0, (LPARAM)&item) ||
+        item.lParam < 1 || item.lParam > peerCount) return -1;
+    return (int)item.lParam - 1;
+}
+
+static void refreshPeerNode(int index)
+{
+    TVINSERTSTRUCTW insert;
+    WCHAR caption[300];
+    HTREEITEM parent = peerSaved[index] ? savedGroup : discoveredGroup;
+    BOOL selected = selectedPeer() == index;
+    if (peerNodes[index] && (!peerSaved[index] && !peerSeen[index])) {
+        TreeView_DeleteItem(devices, peerNodes[index]);
+        peerNodes[index] = NULL;
+        return;
+    }
+    if (peerNodes[index] && TreeView_GetParent(devices, peerNodes[index]) != parent) {
+        TreeView_DeleteItem(devices, peerNodes[index]);
+        peerNodes[index] = NULL;
+    }
+    if (!peerSaved[index] && !peerSeen[index]) return;
+    lstrcpyW(caption, peers[index].name);
+    if (peerSaved[index] && !peerSeen[index] && !peerConnected[index]) lstrcatW(caption, L" (offline)");
+    ZeroMemory(&insert, sizeof(insert));
+    insert.hParent = parent;
+    insert.hInsertAfter = TVI_LAST;
+    insert.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+    insert.item.pszText = caption;
+    insert.item.lParam = index + 1;
+    insert.item.iImage = 0;
+    insert.item.iSelectedImage = 0;
+    if (!peerNodes[index]) {
+        peerNodes[index] = (HTREEITEM)SendMessageW(devices, TVM_INSERTITEMW, 0, (LPARAM)&insert);
+        TreeView_Expand(devices, parent, TVE_EXPAND);
+        if (selected) TreeView_SelectItem(devices, peerNodes[index]);
+    } else {
+        insert.item.hItem = peerNodes[index];
+        SendMessageW(devices, TVM_SETITEMW, 0, (LPARAM)&insert.item);
+    }
+}
+
+static void syncSavedDevices(HWND window, const SessionStatus *snapshot)
+{
+    static int previousPhase = -1;
+    static char previousId[39];
+    int i;
+    if (previousPhase == snapshot->phase && !strcmp(previousId, snapshot->deviceId)) return;
+    previousPhase = snapshot->phase;
+    strcpy(previousId, snapshot->deviceId);
+    for (i = 0; i < peerCount; ++i) {
+        peerConnected[i] = snapshot->phase == SESSION_PAIRED && !strcmp(peers[i].identity.id, snapshot->deviceId);
+        if (!strcmp(peers[i].identity.id, snapshot->deviceId)) {
+            int saved = saved_device_exists(peers[i].identity.id);
+            if (saved >= 0) peerSaved[i] = saved;
+            if (peerConnected[i] && peerSaved[i] && peers[i].address[0] && !saved_device_remember(&peers[i]))
+                MessageBoxW(window, L"Pairing is saved, but the device name and address could not be remembered.",
+                            L"Connect95", MB_OK | MB_ICONWARNING);
+            if (!peerSaved[i]) saved_device_forget_details(peers[i].identity.id);
+        }
+        refreshPeerNode(i);
+    }
+}
+
 static DWORD clipboardSequence;
 static uint64_t localClipboardTime;
 static unsigned int appliedClipboard;
@@ -43,7 +118,7 @@ static void showPeer(void)
     WCHAR description[256];
     SessionStatus session;
     BOOL paired;
-    int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    int selected = selectedPeer();
     session_status(&session);
     paired = selected >= 0 && selected < peerCount && session.phase == SESSION_PAIRED &&
              !strcmp(session.deviceId, peers[selected].identity.id);
@@ -66,13 +141,16 @@ static void showPeer(void)
     if (selected < 0 || selected >= peerCount) {
         EnableWindow(pairButton, FALSE);
         SetWindowTextW(heading, L"Connect95");
-        SetWindowTextW(state, L"No device selected");
+        SetWindowTextW(state, L"Select a device from either group.");
+        SetWindowTextW(transferText, L"No active transfers");
+        SendMessageW(progress, PBM_SETPOS, 0, 0);
+        EnableMenuItem(GetMenu(GetParent(devices)), ID_PAIR, MF_BYCOMMAND | MF_GRAYED);
         return;
     }
     SetWindowTextW(heading, peers[selected].name);
-    EnableWindow(pairButton, peers[selected].identity.version == 7);
+    EnableWindow(pairButton, peers[selected].identity.version == 7 && peers[selected].address[0]);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_PAIR, MF_BYCOMMAND |
-                   (peers[selected].identity.version == 7 ? MF_ENABLED : MF_GRAYED));
+                   (peers[selected].identity.version == 7 && peers[selected].address[0] ? MF_ENABLED : MF_GRAYED));
     if (!strcmp(session.deviceId, peers[selected].identity.id) && session.phase != SESSION_IDLE) {
         SetWindowTextW(state, session.text);
         SetWindowTextW(transferText, session.transferText[0] ? session.transferText : L"No active transfers");
@@ -85,11 +163,14 @@ static void showPeer(void)
     }
     SetWindowTextW(transferText, L"No active transfers");
     SendMessageW(progress, PBM_SETPOS, 0, 0);
-    if ((DWORD)(GetTickCount() - peers[selected].seen) > 120000)
+    if (peerSaved[selected] && !peerSeen[selected]) {
+        SetWindowTextW(state, peers[selected].address[0] ? L"Saved device. Try its last known address." :
+                                                     L"Saved device. Refresh discovery on the phone.");
+    } else if ((DWORD)(GetTickCount() - peers[selected].seen) > 120000)
         SetWindowTextW(state, L"Discovery is stale. Refresh devices on the phone.");
     else
         SetWindowTextW(state, L"Discovered. Not connected.");
-    wsprintfW(description, L"%hs:%u · Protocol %d · Not paired",
+    wsprintfW(description, peerSaved[selected] ? L"%hs:%u · Protocol %d · Saved" : L"%hs:%u · Protocol %d · Not paired",
               peers[selected].address, peers[selected].identity.port,
               peers[selected].identity.version);
     SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
@@ -97,8 +178,12 @@ static void showPeer(void)
 
 static void pairSelected(HWND window)
 {
-    int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    int selected = selectedPeer();
     if (selected < 0 || selected >= peerCount) return;
+    if (!peers[selected].address[0]) {
+        MessageBoxW(window, L"Refresh discovery in KDE Connect on the phone to find its address.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
     if (peers[selected].identity.version != 7) {
         MessageBoxW(window, L"This release supports pairing with protocol 7. Protocol 8 pairing is under development.", L"Connect95", MB_OK | MB_ICONINFORMATION);
         return;
@@ -112,7 +197,7 @@ static void pairSelected(HWND window)
 static BOOL pairedSelection(void)
 {
     SessionStatus snapshot;
-    int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    int selected = selectedPeer();
     session_status(&snapshot);
     return selected >= 0 && selected < peerCount && snapshot.phase == SESSION_PAIRED &&
            !strcmp(snapshot.deviceId, peers[selected].identity.id);
@@ -201,7 +286,7 @@ static void clipboardMenu(HWND window)
     session_status(&snapshot);
     AppendMenuW(menu, MF_STRING, ID_SEND_CLIPBOARD, L"Send PC clipboard to phone");
     AppendMenuW(menu, MF_STRING | (snapshot.clipboardRevision ? 0 : MF_GRAYED),
-                ID_RECEIVE_CLIPBOARD, L"Apply latest phone clipboard");
+                ID_RECEIVE_CLIPBOARD, L"Paste phone clipboard to PC");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING | (snapshot.clipboardSync ? MF_CHECKED : 0), ID_SYNC_CLIPBOARD,
                 L"Sync text clipboard automatically");
@@ -216,6 +301,7 @@ static void pollSession(HWND window)
     SessionStatus snapshot;
     WCHAR question[512];
     session_status(&snapshot);
+    syncSavedDevices(window, &snapshot);
     pollClipboard(window, &snapshot);
     if (snapshot.phase != SESSION_CONFIRM) confirmationShown = FALSE;
     if (snapshot.phase == SESSION_CONFIRM && !confirmationShown) {
@@ -243,7 +329,7 @@ static void startDiscovery(HWND window)
 static void receiveDiscovery(void)
 {
     DiscoveryPeer peer;
-    LVITEMW item;
+    BOOL detailsChanged;
     int batch, result, index;
     /* Bound each dispatch so network traffic cannot monopolize the UI. */
     for (batch = 0; batch < 32; ++batch) {
@@ -257,20 +343,18 @@ static void receiveDiscovery(void)
         for (index = 0; index < peerCount; ++index)
             if (!strcmp(peers[index].identity.id, peer.identity.id)) break;
         if (index == MAX_PEERS) continue;
-        ZeroMemory(&item, sizeof(item));
-        item.mask = LVIF_TEXT;
-        item.iItem = index;
-        item.pszText = peer.name;
+        detailsChanged = index == peerCount || wcscmp(peers[index].name, peer.name) ||
+            strcmp(peers[index].address, peer.address) || peers[index].identity.port != peer.identity.port ||
+            peers[index].identity.version != peer.identity.version;
         if (index == peerCount) {
-            if (SendMessageW(devices, LVM_INSERTITEMW, 0, (LPARAM)&item) == -1) continue;
+            peerSaved[index] = saved_device_exists(peer.identity.id) == 1;
             ++peerCount;
-        } else {
-            SendMessageW(devices, LVM_SETITEMW, 0, (LPARAM)&item);
         }
         peers[index] = peer;
-        if (ListView_GetNextItem(devices, -1, LVNI_SELECTED) < 0)
-            ListView_SetItemState(devices, index, LVIS_SELECTED | LVIS_FOCUSED,
-                                 LVIS_SELECTED | LVIS_FOCUSED);
+        peerSeen[index] = TRUE;
+        if (peerSaved[index] && detailsChanged) saved_device_remember(&peers[index]);
+        refreshPeerNode(index);
+        if (selectedPeer() < 0 && peerNodes[index]) TreeView_SelectItem(devices, peerNodes[index]);
         showPeer();
     }
 }
@@ -307,6 +391,7 @@ static HMENU createMenu(void)
     HMENU menu = CreateMenu();
     HMENU file = CreatePopupMenu();
     HMENU device = CreatePopupMenu();
+    HMENU edit = CreatePopupMenu();
     HMENU help = CreatePopupMenu();
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, L"Send file…");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
@@ -317,11 +402,12 @@ static HMENU createMenu(void)
     AppendMenuW(device, MF_STRING, ID_FORGET, L"Forget pairing on this PC…");
     AppendMenuW(device, MF_SEPARATOR, 0, NULL);
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Find phone");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_SEND_CLIPBOARD, L"Send clipboard to phone");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RECEIVE_CLIPBOARD, L"Apply phone clipboard");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_SYNC_CLIPBOARD, L"Sync text clipboard automatically");
+    AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SEND_CLIPBOARD, L"Send clipboard to phone");
+    AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_RECEIVE_CLIPBOARD, L"Paste phone clipboard to PC\tCtrl+Shift+V");
+    AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SYNC_CLIPBOARD, L"Sync text clipboard automatically");
     AppendMenuW(help, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"File");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)edit, L"Edit");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, L"Device");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"Help");
     return menu;
@@ -372,7 +458,7 @@ static void layout(HWND window)
     GetWindowRect(statusBar, &statusArea);
     width = area.right;
     height = area.bottom - (statusArea.bottom - statusArea.top);
-    left = 150;
+    left = DEVICE_PANE_WIDTH;
     rightX = left + 20;
     rightWidth = width - rightX - 10;
     buttonWidth = (rightWidth - 12) / 3;
@@ -420,9 +506,57 @@ static void drawButton(const DRAWITEMSTRUCT *item)
     }
 }
 
+static HICON loadPhoneIcon(void)
+{
+    WCHAR path[MAX_PATH];
+    HICON icon = NULL;
+    UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
+    if (length && length + 12 < ARRAYSIZE(path)) {
+        lstrcatW(path, L"\\tapi32.dll");
+        ExtractIconExW(path, 0, NULL, &icon, 1);
+    }
+    if (!icon) icon = LoadImageW(instance, MAKEINTRESOURCEW(101), IMAGE_ICON, 16, 16, 0);
+    return icon;
+}
+
+static BOOL initializeDeviceTree(void)
+{
+    TVINSERTSTRUCTW group;
+    HICON phone = loadPhoneIcon();
+    int i;
+    deviceImages = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 1, 1);
+    if (!deviceImages || !phone) {
+        if (phone) DestroyIcon(phone);
+        return FALSE;
+    }
+    i = ImageList_AddIcon(deviceImages, phone);
+    DestroyIcon(phone);
+    if (i < 0) return FALSE;
+    TreeView_SetImageList(devices, deviceImages, TVSIL_NORMAL);
+    ZeroMemory(&group, sizeof(group));
+    group.hParent = TVI_ROOT;
+    group.hInsertAfter = TVI_LAST;
+    group.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_STATE | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+    group.item.state = TVIS_BOLD;
+    group.item.stateMask = TVIS_BOLD;
+    group.item.iImage = I_IMAGENONE;
+    group.item.iSelectedImage = I_IMAGENONE;
+    group.item.pszText = L"Saved devices";
+    savedGroup = (HTREEITEM)SendMessageW(devices, TVM_INSERTITEMW, 0, (LPARAM)&group);
+    group.item.pszText = L"Discovered devices";
+    discoveredGroup = (HTREEITEM)SendMessageW(devices, TVM_INSERTITEMW, 0, (LPARAM)&group);
+    if (!savedGroup || !discoveredGroup) return FALSE;
+    peerCount = saved_devices_load(peers, MAX_PEERS);
+    for (i = 0; i < peerCount; ++i) {
+        peerSaved[i] = TRUE;
+        refreshPeerNode(i);
+    }
+    if (peerCount) TreeView_SelectItem(devices, peerNodes[0]);
+    return TRUE;
+}
+
 static BOOL createControls(HWND window)
 {
-    LVCOLUMNW column;
     NONCLIENTMETRICSW metrics;
     ZeroMemory(&metrics, sizeof(metrics));
     metrics.cbSize = sizeof(metrics);
@@ -432,16 +566,10 @@ static BOOL createControls(HWND window)
     metrics.lfMessageFont.lfHeight = -18;
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     titleFont = CreateFontIndirectW(&metrics.lfMessageFont);
-    devices = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
-        WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+    devices = CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, window, NULL, instance, NULL);
     SendMessageW(devices, WM_SETFONT, (WPARAM)normalFont, TRUE);
-    ListView_SetExtendedListViewStyle(devices, LVS_EX_FULLROWSELECT);
-    ZeroMemory(&column, sizeof(column));
-    column.mask = LVCF_TEXT | LVCF_WIDTH;
-    column.pszText = L"Devices";
-    column.cx = 125;
-    SendMessageW(devices, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
     heading = control(window, L"STATIC", L"Connect95", SS_LEFT, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
     state = control(window, L"STATIC", L"No connected devices", SS_LEFT, 0);
@@ -457,6 +585,7 @@ static BOOL createControls(HWND window)
     statusBar = control(window, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0);
     SendMessageW(statusBar, SB_SETTEXTW, 0,
         (LPARAM)L"  Ready.");
+    if (devices && !initializeDeviceTree()) return FALSE;
     return normalFont && titleFont && devices && heading && state && battery &&
         pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
         cancelTransferButton && progress && statusBar;
@@ -489,7 +618,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_PAINT: {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
-        DrawIconEx(dc, 170, 16, icons[0], 32, 32, 0, NULL, DI_NORMAL);
+        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 16, icons[0], 32, 32, 0, NULL, DI_NORMAL);
         EndPaint(window, &paint);
         return 0;
     }
@@ -503,7 +632,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
     case WM_NOTIFY:
         if (((NMHDR *)lParam)->hwndFrom == devices &&
-            ((NMHDR *)lParam)->code == LVN_ITEMCHANGED) showPeer();
+            ((NMHDR *)lParam)->code == TVN_SELCHANGEDW) showPeer();
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
@@ -524,11 +653,16 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_RING: if (pairedSelection()) session_ring(); break;
         case ID_CANCEL_TRANSFER: session_cancel_transfer(); break;
         case ID_FORGET: {
-            int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+            int selected = selectedPeer();
             if (selected >= 0 && selected < peerCount &&
                 MessageBoxW(window, L"Remove the saved certificate for the selected device on this PC?",
                     L"Connect95", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
-                session_forget(&peers[selected]);
+                if (session_forget(&peers[selected])) {
+                    saved_device_forget_details(peers[selected].identity.id);
+                    peerSaved[selected] = FALSE;
+                    peerConnected[selected] = FALSE;
+                    refreshPeerNode(selected);
+                }
                 showPeer();
             }
             break;
@@ -539,7 +673,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.5.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.6.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
                 "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
@@ -570,6 +704,8 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     INITCOMMONCONTROLSEX common;
     HWND window;
     MSG message;
+    HACCEL shortcuts;
+    ACCEL pasteShortcut = {FVIRTKEY | FCONTROL | FSHIFT, 'V', ID_RECEIVE_CLIPBOARD};
     int result, index;
     (void)previous;
     (void)command;
@@ -577,7 +713,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     clipboardSequence = GetClipboardSequenceNumber();
     session_init();
     common.dwSize = sizeof(common);
-    common.dwICC = ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
+    common.dwICC = ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
     if (!InitCommonControlsEx(&common)) return 1;
     icons[0] = loadSystemIcon(17, 101);
     icons[1] = loadSystemIcon(4, 102);
@@ -600,13 +736,18 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
         MessageBoxW(NULL, L"Could not create the Connect95 window.", L"Connect95", MB_ICONERROR);
         return 1;
     }
+    shortcuts = CreateAcceleratorTableW(&pasteShortcut, 1);
     ShowWindow(window, show);
     UpdateWindow(window);
     while ((result = GetMessageW(&message, NULL, 0, 0)) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
+        if (!shortcuts || !TranslateAcceleratorW(window, shortcuts, &message)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
     }
+    if (shortcuts) DestroyAcceleratorTable(shortcuts);
     session_free();
+    if (deviceImages) ImageList_Destroy(deviceImages);
     DeleteObject(normalFont);
     DeleteObject(titleFont);
     for (index = 0; index < 4; ++index) DestroyIcon(icons[index]);

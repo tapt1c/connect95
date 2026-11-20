@@ -47,8 +47,10 @@ int identity_parse(const char *data, size_t size, DiscoveryIdentity *identity)
     /* Reject embedded NUL, including escaped NUL which C string APIs truncate. */
     for (i = 0; i < size; ++i) {
         if (!data[i]) return 0;
-        if (data[i] == '\\' && i + 5 < size &&
-            memcmp(data + i, "\\u0000", 6) == 0) return 0;
+        if (data[i] == '\\') {
+            if (i + 5 < size && memcmp(data + i, "\\u0000", 6) == 0) return 0;
+            if (i + 1 < size) ++i;
+        }
     }
     root = cJSON_ParseWithLengthOpts(data, size, &end, 0);
     if (!root) return 0;

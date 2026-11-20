@@ -1,4 +1,5 @@
 #include "identity.h"
+#include "vendor/cJSON.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +42,17 @@ int main(void)
     }
     assert(!parse("{\"type\":\"kdeconnect.identity\",\"body\":{\"deviceId\":\"1234567890abcdef1234567890abcdef\",\"tcpPort\":1716,\"protocolVersion\":8,\"deviceName\":\"A\",\"deviceName\":\"B\"}}"));
     assert(!parse("{\"type\":\"kdeconnect.identity\",\"body\":{\"deviceId\":\"1234567890abcdef1234567890abcdef\",\"tcpPort\":1716,\"protocolVersion\":8,\"deviceName\":\"A\\u0000B\"}}"));
+    {
+        cJSON *cache = cJSON_Parse(valid);
+        cJSON *body = cJSON_GetObjectItemCaseSensitive(cache, "body");
+        char *encoded;
+        assert(cJSON_ReplaceItemInObjectCaseSensitive(body, "deviceName", cJSON_CreateString("\\u0000")));
+        encoded = cJSON_PrintUnformatted(cache);
+        assert(identity_parse(encoded, strlen(encoded), &result));
+        assert(!strcmp(result.name, "\\u0000"));
+        cJSON_free(encoded);
+        cJSON_Delete(cache);
+    }
     /* Deterministic malformed datagrams, also run with ASan/UBSan. */
     for (i = 0; i < 10000; ++i) {
         memcpy(packet, valid, length);

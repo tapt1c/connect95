@@ -15,7 +15,7 @@ build:
 build/resources.o: resources/connect95.rc resources/connect95.manifest resources/phone.ico resources/send.ico resources/ring.ico resources/clipboard.ico | build
 	$(WINDRES) -I resources $< $@
 
-build/connect95.exe: src/main.c src/clipboard.c src/device_plugins.c src/packet.c src/share_info.c src/transfer.c src/transport.c src/pairing.c src/session.c src/credentials.c src/discovery.c src/identity.c src/vendor/cJSON.c build/resources.o src/discovery.h src/identity.h src/vendor/cJSON.h src/session.h src/clipboard.h src/device_plugins.h src/packet.h src/share_info.h src/transfer.h src/transport.h src/pairing.h src/credentials.h src/tls_config.h $(TLS_LIBS)
+build/connect95.exe: src/main.c src/saved_devices.c src/clipboard.c src/device_plugins.c src/packet.c src/share_info.c src/transfer.c src/transport.c src/pairing.c src/session.c src/credentials.c src/discovery.c src/identity.c src/vendor/cJSON.c build/resources.o src/discovery.h src/identity.h src/vendor/cJSON.h src/session.h src/saved_devices.h src/clipboard.h src/device_plugins.h src/packet.h src/share_info.h src/transfer.h src/transport.h src/pairing.h src/credentials.h src/tls_config.h $(TLS_LIBS)
 	$(CC) $(CFLAGS) $(TLS_FLAGS) -mwindows -static -Wl,--gc-sections -Wl,--major-subsystem-version,5,--minor-subsystem-version,1 -o $@ $(filter %.c %.o,$^) $(TLS_LIBS) $(LDLIBS)
 
 clean:
