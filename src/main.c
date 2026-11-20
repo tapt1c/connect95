@@ -1,6 +1,7 @@
-#include <windows.h>
+#include "discovery.h"
 #include <commctrl.h>
 #include <shellapi.h>
+#include <string.h>
 
 #define ID_EXIT 200
 #define ID_ABOUT 201
@@ -9,6 +10,9 @@
 #define ID_RING 211
 #define ID_CLIPBOARD 212
 #define WM_TRAY (WM_APP + 1)
+#define WM_DISCOVERY (WM_APP + 2)
+#define ID_DISCOVERY 220
+#define MAX_PEERS 64
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton;
@@ -18,6 +22,76 @@ static HICON icons[4];
 static NOTIFYICONDATAW tray;
 static BOOL trayAdded;
 static UINT taskbarCreated;
+static DiscoveryPeer peers[MAX_PEERS];
+static int peerCount;
+
+static void showPeer(void)
+{
+    WCHAR description[128];
+    int selected = ListView_GetNextItem(devices, -1, LVNI_SELECTED);
+    if (selected < 0 || selected >= peerCount) {
+        SetWindowTextW(heading, L"Connect95");
+        SetWindowTextW(state, L"Нет выбранного устройства");
+        return;
+    }
+    SetWindowTextW(heading, peers[selected].name);
+    if ((DWORD)(GetTickCount() - peers[selected].seen) > 120000)
+        SetWindowTextW(state, L"Объявление устарело. Обновите поиск на телефоне.");
+    else
+        SetWindowTextW(state, L"Обнаружено. Соединение не установлено.");
+    wsprintfW(description, L"%hs:%u · Протокол %d · Без сопряжения",
+              peers[selected].address, peers[selected].identity.port,
+              peers[selected].identity.version);
+    SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
+}
+
+static void startDiscovery(HWND window)
+{
+    WCHAR errorText[160];
+    int error = discovery_start(window, WM_DISCOVERY);
+    if (error) {
+        wsprintfW(errorText, L"UDP 1716 недоступен (ошибка %d). Повторите поиск через меню «Устройство».", error);
+        SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)errorText);
+    } else {
+        SendMessageW(statusBar, SB_SETTEXTW, 0,
+            (LPARAM)L"UDP 1716: ожидание. Обновите список устройств в KDE Connect на телефоне.");
+    }
+}
+
+static void receiveDiscovery(void)
+{
+    DiscoveryPeer peer;
+    LVITEMW item;
+    int batch, result, index;
+    /* Bound each dispatch so network traffic cannot monopolize the UI. */
+    for (batch = 0; batch < 32; ++batch) {
+        result = discovery_receive(&peer);
+        if (result <= 0) {
+            if (result < 0) SendMessageW(statusBar, SB_SETTEXTW, 0,
+                (LPARAM)L"Ошибка приёма UDP. Повторите поиск через меню «Устройство».");
+            break;
+        }
+        if (result != 1) continue;
+        for (index = 0; index < peerCount; ++index)
+            if (!strcmp(peers[index].identity.id, peer.identity.id)) break;
+        if (index == MAX_PEERS) continue;
+        ZeroMemory(&item, sizeof(item));
+        item.mask = LVIF_TEXT;
+        item.iItem = index;
+        item.pszText = peer.name;
+        if (index == peerCount) {
+            if (SendMessageW(devices, LVM_INSERTITEMW, 0, (LPARAM)&item) == -1) continue;
+            ++peerCount;
+        } else {
+            SendMessageW(devices, LVM_SETITEMW, 0, (LPARAM)&item);
+        }
+        peers[index] = peer;
+        if (ListView_GetNextItem(devices, -1, LVNI_SELECTED) < 0)
+            ListView_SetItemState(devices, index, LVIS_SELECTED | LVIS_FOCUSED,
+                                 LVIS_SELECTED | LVIS_FOCUSED);
+        showPeer();
+    }
+}
 
 /* XP shell32 icon indexes: computer, open folder, search, document.
  * Load from the running OS so XP supplies its own artwork. */
@@ -55,6 +129,8 @@ static HMENU createMenu(void)
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, L"Отправить файл…");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
     AppendMenuW(file, MF_STRING, ID_EXIT, L"Выход");
+    AppendMenuW(device, MF_STRING, ID_DISCOVERY, L"Начать поиск устройств");
+    AppendMenuW(device, MF_SEPARATOR, 0, NULL);
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Найти телефон");
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_CLIPBOARD, L"Буфер обмена");
     AppendMenuW(help, MF_STRING, ID_ABOUT, L"О программе…");
@@ -205,6 +281,8 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_CREATE:
         if (!createControls(window)) return -1;
         addTray(window);
+        startDiscovery(window);
+        SetTimer(window, 1, 10000, NULL);
         return 0;
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED && trayAdded) ShowWindow(window, SW_HIDE);
@@ -224,15 +302,28 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         EndPaint(window, &paint);
         return 0;
     }
+    case WM_DISCOVERY:
+        if (WSAGETSELECTERROR(lParam)) {
+            SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)L"Ошибка UDP. Повторите поиск через меню «Устройство».");
+        } else if (WSAGETSELECTEVENT(lParam) == FD_READ) receiveDiscovery();
+        return 0;
+    case WM_TIMER:
+        if (ListView_GetNextItem(devices, -1, LVNI_SELECTED) >= 0) showPeer();
+        return 0;
+    case WM_NOTIFY:
+        if (((NMHDR *)lParam)->hwndFrom == devices &&
+            ((NMHDR *)lParam)->code == LVN_ITEMCHANGED) showPeer();
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_DISCOVERY: startDiscovery(window); break;
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.1.1\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.2.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
-                "Interface preview. Protocol support is in development.", icons[0]);
+                "UDP discovery preview. TLS and pairing are in development.", icons[0]);
             break;
         }
         return 0;
@@ -244,6 +335,8 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        KillTimer(window, 1);
+        discovery_stop();
         if (trayAdded) Shell_NotifyIconW(NIM_DELETE, &tray);
         PostQuitMessage(0);
         return 0;
