@@ -19,6 +19,23 @@ static NOTIFYICONDATAW tray;
 static BOOL trayAdded;
 static UINT taskbarCreated;
 
+/* XP shell32 icon indexes: computer, open folder, search, document.
+ * Load from the running OS so XP supplies its own artwork. */
+static HICON loadSystemIcon(int shellIndex, int fallbackResource)
+{
+    WCHAR path[MAX_PATH];
+    HICON icon = NULL;
+    UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
+    if (length && length + 13 < ARRAYSIZE(path)) {
+        lstrcatW(path, L"\\shell32.dll");
+        ExtractIconExW(path, shellIndex, &icon, NULL, 1);
+    }
+    if (!icon)
+        icon = LoadImageW(instance, MAKEINTRESOURCEW(fallbackResource),
+                          IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+    return icon;
+}
+
 static HWND control(HWND parent, const WCHAR *kind, const WCHAR *text,
                     DWORD style, int id)
 {
@@ -92,22 +109,22 @@ static void layout(HWND window)
     GetWindowRect(statusBar, &statusArea);
     width = area.right;
     height = area.bottom - (statusArea.bottom - statusArea.top);
-    left = 220;
-    rightX = left + 30;
-    rightWidth = width - rightX - 18;
-    buttonWidth = (rightWidth - 20) / 3;
-    buttonY = 164;
-    MoveWindow(devices, 12, 12, left, height - 24, TRUE);
-    MoveWindow(heading, rightX + 88, 30, rightWidth - 88, 35, TRUE);
-    MoveWindow(state, rightX + 88, 77, rightWidth - 88, 28, TRUE);
-    MoveWindow(battery, rightX + 88, 111, rightWidth - 88, 24, TRUE);
-    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 100, TRUE);
-    MoveWindow(ringButton, rightX + buttonWidth + 10, buttonY, buttonWidth, 100, TRUE);
-    MoveWindow(clipboardButton, rightX + (buttonWidth + 10) * 2,
-               buttonY, buttonWidth, 100, TRUE);
-    MoveWindow(transferBox, rightX, 285, rightWidth, height - 301, TRUE);
-    MoveWindow(transferText, rightX + 18, 317, rightWidth - 36, 30, TRUE);
-    MoveWindow(progress, rightX + 18, 359, rightWidth - 36, 21, TRUE);
+    left = 150;
+    rightX = left + 20;
+    rightWidth = width - rightX - 10;
+    buttonWidth = (rightWidth - 12) / 3;
+    buttonY = 104;
+    MoveWindow(devices, 8, 8, left, height - 16, TRUE);
+    MoveWindow(heading, rightX + 44, 12, rightWidth - 44, 25, TRUE);
+    MoveWindow(state, rightX + 44, 43, rightWidth - 44, 21, TRUE);
+    MoveWindow(battery, rightX + 44, 70, rightWidth - 44, 21, TRUE);
+    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 72, TRUE);
+    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 72, TRUE);
+    MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
+               buttonY, rightWidth - (buttonWidth + 6) * 2, 72, TRUE);
+    MoveWindow(transferBox, rightX, 188, rightWidth, height - 196, TRUE);
+    MoveWindow(transferText, rightX + 12, 210, rightWidth - 24, 22, TRUE);
+    MoveWindow(progress, rightX + 12, 240, rightWidth - 24, 16, TRUE);
     InvalidateRect(window, NULL, TRUE);
 }
 
@@ -118,17 +135,17 @@ static void drawButton(const DRAWITEMSTRUCT *item)
     RECT textRect = rect;
     UINT flags = DFCS_BUTTONPUSH;
     int iconIndex = (int)item->CtlID - ID_SEND + 1;
-    int x = (rect.right - rect.left - 48) / 2;
+    int x = (rect.right - rect.left - 32) / 2;
     BOOL disabled = (item->itemState & ODS_DISABLED) != 0;
     if (item->itemState & ODS_SELECTED) flags |= DFCS_PUSHED;
     FillRect(item->hDC, &rect, GetSysColorBrush(COLOR_BTNFACE));
     DrawFrameControl(item->hDC, &rect, DFC_BUTTON, flags);
-    DrawIconEx(item->hDC, x, 10, icons[iconIndex], 48, 48, 0, NULL, DI_NORMAL);
+    DrawIconEx(item->hDC, x, 7, icons[iconIndex], 32, 32, 0, NULL, DI_NORMAL);
     GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
     SetBkMode(item->hDC, TRANSPARENT);
     SetTextColor(item->hDC, GetSysColor(disabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
     SelectObject(item->hDC, normalFont);
-    textRect.top += 67;
+    textRect.top += 47;
     textRect.left += 4;
     textRect.right -= 4;
     DrawTextW(item->hDC, label, -1, &textRect, DT_CENTER | DT_SINGLELINE);
@@ -147,7 +164,7 @@ static BOOL createControls(HWND window)
     if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         return FALSE;
     normalFont = CreateFontIndirectW(&metrics.lfMessageFont);
-    metrics.lfMessageFont.lfHeight = -24;
+    metrics.lfMessageFont.lfHeight = -18;
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     titleFont = CreateFontIndirectW(&metrics.lfMessageFont);
     devices = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
@@ -158,7 +175,7 @@ static BOOL createControls(HWND window)
     ZeroMemory(&column, sizeof(column));
     column.mask = LVCF_TEXT | LVCF_WIDTH;
     column.pszText = L"Устройства";
-    column.cx = 195;
+    column.cx = 125;
     SendMessageW(devices, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
     heading = control(window, L"STATIC", L"Connect95", SS_LEFT, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
@@ -194,8 +211,8 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         else layout(window);
         return 0;
     case WM_GETMINMAXINFO:
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 850;
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 500;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 640;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 360;
         return 0;
     case WM_DRAWITEM:
         drawButton((const DRAWITEMSTRUCT *)lParam);
@@ -203,7 +220,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_PAINT: {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
-        DrawIconEx(dc, 260, 40, icons[0], 64, 64, 0, NULL, DI_NORMAL);
+        DrawIconEx(dc, 170, 16, icons[0], 32, 32, 0, NULL, DI_NORMAL);
         EndPaint(window, &paint);
         return 0;
     }
@@ -212,7 +229,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.1.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.1.1\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
                 "Interface preview. Protocol support is in development.", icons[0]);
@@ -247,9 +264,10 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     common.dwSize = sizeof(common);
     common.dwICC = ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
     if (!InitCommonControlsEx(&common)) return 1;
-    for (index = 0; index < 4; ++index)
-        icons[index] = LoadImageW(instance, MAKEINTRESOURCEW(101 + index), IMAGE_ICON,
-                                 64, 64, LR_DEFAULTCOLOR);
+    icons[0] = loadSystemIcon(17, 101);
+    icons[1] = loadSystemIcon(4, 102);
+    icons[2] = loadSystemIcon(22, 103);
+    icons[3] = loadSystemIcon(1, 104);
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     ZeroMemory(&cls, sizeof(cls));
     cls.cbSize = sizeof(cls);
@@ -257,12 +275,12 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.lpfnWndProc = windowProc;
     cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
     cls.hIcon = icons[0];
-    cls.hIconSm = LoadImageW(instance, MAKEINTRESOURCEW(101), IMAGE_ICON, 16, 16, 0);
+    cls.hIconSm = (HICON)CopyImage(icons[0], IMAGE_ICON, 16, 16, 0);
     cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
     cls.lpszClassName = L"Connect95.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
     window = CreateWindowExW(0, cls.lpszClassName, L"Connect95", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 920, 560, NULL, createMenu(), instance, NULL);
+        CW_USEDEFAULT, CW_USEDEFAULT, 660, 360, NULL, createMenu(), instance, NULL);
     if (!window) {
         MessageBoxW(NULL, L"Не удалось создать окно Connect95.", L"Connect95", MB_ICONERROR);
         return 1;
