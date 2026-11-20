@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.6.0 has an English interface, native Windows shell icons, a compact
+Version 0.7.0 has an English interface, native Windows shell icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
 The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
 
@@ -84,7 +84,7 @@ The **Clipboard** button opens a menu with these actions.
 - **Sync text clipboard automatically** enables two-way synchronization for this connection.
 
 The same paste action is available from **Edit → Paste phone clipboard to PC**,
-or **Ctrl+Shift+V** while Connect95 is focused. First use KDE Connect's explicit
+or **Ctrl+Shift+V** while the main Connect95 window is focused. First use KDE Connect's explicit
 **Send clipboard** action on the phone if Android restricts background reading.
 The paste action becomes available after text arrives from the paired phone.
 
@@ -100,6 +100,35 @@ require its explicit **Send clipboard** action for phone-to-PC updates because
 background clipboard access is restricted by Android. Clipboard updates made
 while a file transfer is running are queued, with the latest queued text retained.
 
+## Phone notifications
+
+Enable **Notification sync** in KDE Connect on Android and grant it notification
+access in Android settings. Restart Connect95 and reconnect so the phone sees
+the notification capability.
+
+New non-silent notifications appear as native Windows XP balloons above the tray
+icon through `Shell_NotifyIconW` and `NIF_INFO`. Clicking a balloon opens the matching
+entry in **Notifications**. The same window is available from **View → Notifications…**
+and the tray menu. It shows application names, titles, and the full received text.
+Long text is readable in the multiline detail pane.
+
+Updates replace the existing entry with the same ID. Phone cancellations remove
+entries and queued alerts. Silent packets, including the initial list from the
+phone, update the list. Alert IDs are queued and repeated updates are coalesced.
+Windows controls the actual balloon display and duration.
+
+Up to 128 received active entries are held in memory for the current connection.
+The list remains readable after disconnection and resets when connecting again.
+Notification data uses the existing TLS connection and the 64 KiB packet limit.
+The serialized network loop processes notification packets after an active file
+transfer finishes.
+
+The main status bar shows the local arrival time of the latest phone clipboard
+packet, helping distinguish fresh text from an older cached clipboard. Use the
+phone's explicit **Send clipboard** action when Android blocks background access.
+
+Maximize commands are disabled in both the main and Notifications windows.
+
 ## Windows XP support
 
 TLS 1.2 is provided by statically linked Mbed TLS 3.6.8. Randomness comes from
@@ -114,7 +143,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.6.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.7.0 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
@@ -151,17 +180,20 @@ python3 tests/check_xp_imports.py i686-w64-mingw32-objdump build/connect95.exe
 
 The pairing tests require a native C compiler, OpenSSL CLI, and Python 3. They
 build native Mbed TLS in `.deps/mbedtls-host` and generate temporary certificates.
-Tests cover TLS 1.2, binary payloads in both directions, verification codes checked
+Notification model tests run as part of `make test`. Tests cover TLS 1.2, binary payloads in both directions, verification codes checked
 against an independent hash, certificate identity errors, PEM reloading, malformed
 packets, file metadata, empty files, large sizes, unsafe Windows filenames, battery fields, clipboard
-limits, escaped text, and connection-time clipboard timestamps.
+limits, escaped text, and connection-time clipboard timestamps, notification ID normalization, duplicate
+updates, repeat messages with new event times, silent history, cancellation,
+alert queue order, and bounded storage.
 
 Manual checks cover pairing, reconnect, file transfer in both directions, empty
 and large files, non-ASCII names, repeated names, cancellation, disconnect during
 transfer, finding the phone, battery/charging updates, clipboard actions in both directions,
 automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
 the About dialog, saved-device persistence across restart, offline selection,
-group migration after pairing/forgetting, and Ctrl+Shift+V clipboard import.
+group migration after pairing/forgetting, Ctrl+Shift+V clipboard import, notification updates/cancellations, silent initial
+sync, balloon clicks, and disabled maximize commands.
 
 The protocol was checked against KDE Connect sources at commit
 `6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.

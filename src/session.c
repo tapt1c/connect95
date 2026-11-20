@@ -17,6 +17,8 @@ static BOOL accepted, ringPending;
 static HANDLE transferCancel;
 static WCHAR pendingPath[MAX_PATH];
 static SessionStatus status;
+static NotificationStore notifications;
+static unsigned int sessionGeneration;
 static ClipboardMessage receivedClipboard;
 static char pendingClipboard[CLIPBOARD_MAX_BYTES + 1];
 static BOOL clipboardPending, clipboardAutomatic;
@@ -128,6 +130,8 @@ static cJSON *identity_packet(Credentials *credentials)
         !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
         !(outgoing = cJSON_AddArrayToObject(body, "outgoingCapabilities")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.share.request")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.notification")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.notification.request")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.battery")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.clipboard")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.clipboard.connect")) ||
@@ -215,6 +219,11 @@ static unsigned __stdcall run_session(void *argument)
             int sent = request && cJSON_AddBoolToObject(body, "request", TRUE) && transport_json(&connection, request, TRUE);
             cJSON_Delete(request);
             if (!sent) goto finish;
+            request = packet_create("kdeconnect.notification.request");
+            body = cJSON_GetObjectItemCaseSensitive(request, "body");
+            sent = request && cJSON_AddBoolToObject(body, "request", TRUE) && transport_json(&connection, request, TRUE);
+            cJSON_Delete(request);
+            if (!sent) goto finish;
             batteryRequested = TRUE;
         }
         if (!used && phase == SESSION_PAIRED && !process_commands(&connection, &credentials)) goto finish;
@@ -286,6 +295,7 @@ static unsigned __stdcall run_session(void *argument)
                 WCHAR check[CLIPBOARD_MAX_BYTES + 1];
                 if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, clipboard.content, -1, check, ARRAYSIZE(check))) {
                     EnterCriticalSection(&guard);
+                    GetLocalTime(&status.clipboardReceived);
                     receivedClipboard = clipboard;
                     ++status.clipboardRevision;
                     if (!status.clipboardRevision) ++status.clipboardRevision;
@@ -293,6 +303,19 @@ static unsigned __stdcall run_session(void *argument)
                     LeaveCriticalSection(&guard);
                 }
                 SecureZeroMemory(&clipboard, sizeof(clipboard));
+            }
+            {
+                PhoneNotification notification;
+                if (notification_parse(received, &notification) &&
+                    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.id, -1, NULL, 0) &&
+                    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.app, -1, NULL, 0) &&
+                    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.title, -1, NULL, 0) &&
+                    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.text, -1, NULL, 0)) {
+                    EnterCriticalSection(&guard);
+                    notification_store_apply(&notifications, &notification);
+                    status.notificationRevision = notifications.revision;
+                    LeaveCriticalSection(&guard);
+                }
             }
             cJSON_Delete(received);
             if (sharing > 0) receive_share(&connection, &credentials, &offer);
@@ -304,6 +327,7 @@ finish:
     EnterCriticalSection(&guard);
     if (status.transferActive) lstrcpyW(status.transferText, L"Transfer interrupted.");
     status.transferActive = FALSE;
+    notifications.alertCount = 0;
     pendingPath[0] = 0;
     ringPending = FALSE;
     clipboardPending = FALSE;
@@ -369,7 +393,12 @@ int session_start(const DiscoveryPeer *peer)
     accepted = FALSE;
     target = *peer;
     EnterCriticalSection(&guard);
+    notification_store_clear(&notifications);
     ZeroMemory(&status, sizeof(status));
+    ++sessionGeneration;
+    if (!sessionGeneration) ++sessionGeneration;
+    status.generation = sessionGeneration;
+    status.notificationRevision = notifications.revision;
     status.batteryCharge = -1;
     strcpy(status.deviceId, peer->identity.id);
     status.phase = SESSION_BUSY;
@@ -386,6 +415,7 @@ void session_free(void)
     if (cancelEvent) CloseHandle(cancelEvent);
     if (confirmEvent) CloseHandle(confirmEvent);
     if (transferCancel) CloseHandle(transferCancel);
+    notification_store_clear(&notifications);
     DeleteCriticalSection(&guard);
 }
 
@@ -473,4 +503,41 @@ void session_clipboard_sync(BOOL enabled)
         SecureZeroMemory(pendingClipboard, sizeof(pendingClipboard));
     }
     LeaveCriticalSection(&guard);
+}
+
+int session_notification_list(NotificationSummary *items, int capacity, unsigned int *revision)
+{
+    int count, i;
+    EnterCriticalSection(&guard);
+    count = notifications.count < capacity ? notifications.count : capacity;
+    for (i = 0; i < count; ++i) {
+        const PhoneNotification *item = notifications.items[notifications.count - i - 1];
+        strcpy(items[i].id, item->id);
+        strcpy(items[i].app, item->app);
+        strcpy(items[i].title, item->title);
+    }
+    *revision = notifications.revision;
+    LeaveCriticalSection(&guard);
+    return count;
+}
+
+int session_notification_get(const char *id, PhoneNotification *notification)
+{
+    const PhoneNotification *item;
+    int found;
+    EnterCriticalSection(&guard);
+    item = notification_store_get(&notifications, id);
+    found = item != NULL;
+    if (found) *notification = *item;
+    LeaveCriticalSection(&guard);
+    return found;
+}
+
+int session_notification_alert(PhoneNotification *notification)
+{
+    int result = 0;
+    EnterCriticalSection(&guard);
+    if (status.phase == SESSION_PAIRED) result = notification_store_alert(&notifications, notification);
+    LeaveCriticalSection(&guard);
+    return result;
 }

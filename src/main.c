@@ -2,6 +2,7 @@
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
+#include "notifications_ui.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -23,6 +24,7 @@
 #define ID_RECEIVE_CLIPBOARD 225
 #define ID_SYNC_CLIPBOARD 226
 #define ID_SEND_CLIPBOARD 227
+#define ID_NOTIFICATIONS 230
 #define MAX_PEERS 64
 #define DEVICE_PANE_WIDTH 175
 
@@ -32,7 +34,10 @@ static HWND clipboardButton, transferBox, transferText, progress, statusBar, can
 static HFONT normalFont, titleFont;
 static HICON icons[4];
 static NOTIFYICONDATAW tray;
-static BOOL trayAdded;
+static BOOL trayAdded, balloonBusy;
+static DWORD balloonStarted, balloonEnded;
+static unsigned int balloonGeneration;
+static char balloonId[NOTIFICATION_ID_BYTES + 1];
 static UINT taskbarCreated;
 static DiscoveryPeer peers[MAX_PEERS];
 static int peerCount;
@@ -158,6 +163,12 @@ static void showPeer(void)
         if (session.code[0] && (session.phase == SESSION_WAIT_PHONE || session.phase == SESSION_CONFIRM)) {
             wsprintfW(description, L"Pairing code %s — compare it with your phone", session.code);
             SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
+        } else if (session.phase == SESSION_PAIRED) {
+            if (session.clipboardRevision) {
+                wsprintfW(description, L"Phone clipboard received at %02u:%02u:%02u. Use Edit to copy it to Windows.",
+                          session.clipboardReceived.wHour, session.clipboardReceived.wMinute, session.clipboardReceived.wSecond);
+                SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
+            } else SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)L"Waiting for phone clipboard. Use Send clipboard in KDE Connect on the phone.");
         } else SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)session.text);
         return;
     }
@@ -295,12 +306,66 @@ static void clipboardMenu(HWND window)
     DestroyMenu(menu);
 }
 
+static void hideBalloon(HWND window)
+{
+    NOTIFYICONDATAW info;
+    ZeroMemory(&info, sizeof(info));
+    info.cbSize = NOTIFYICONDATAW_V2_SIZE;
+    info.hWnd = window;
+    info.uID = 1;
+    info.uFlags = NIF_INFO;
+    Shell_NotifyIconW(NIM_MODIFY, &info);
+    balloonBusy = FALSE;
+    balloonEnded = GetTickCount();
+}
+
+static void pollNotifications(HWND window, const SessionStatus *snapshot)
+{
+    PhoneNotification *notification;
+    NOTIFYICONDATAW info;
+    notifications_ui_tick(snapshot);
+    if (balloonGeneration != snapshot->generation) {
+        if (balloonBusy) hideBalloon(window);
+        balloonGeneration = snapshot->generation;
+        balloonId[0] = 0;
+    }
+    if (snapshot->phase != SESSION_PAIRED) {
+        if (balloonBusy) hideBalloon(window);
+        return;
+    }
+    notification = HeapAlloc(GetProcessHeap(), 0, sizeof(*notification));
+    if (!notification) return;
+    if (balloonBusy) {
+        if (!session_notification_get(balloonId, notification) || (DWORD)(GetTickCount() - balloonStarted) > 40000)
+            hideBalloon(window);
+        HeapFree(GetProcessHeap(), 0, notification);
+        return;
+    }
+    if (trayAdded && (DWORD)(GetTickCount() - balloonEnded) >= 500 && session_notification_alert(notification)) {
+        ZeroMemory(&info, sizeof(info));
+        info.cbSize = NOTIFYICONDATAW_V2_SIZE;
+        info.hWnd = window;
+        info.uID = 1;
+        info.uFlags = NIF_INFO;
+        info.dwInfoFlags = NIIF_INFO;
+        info.uTimeout = 10000;
+        notifications_balloon_text(notification, info.szInfoTitle, info.szInfo);
+        if (Shell_NotifyIconW(NIM_MODIFY, &info)) {
+            strcpy(balloonId, notification->id);
+            balloonBusy = TRUE;
+            balloonStarted = GetTickCount();
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, notification);
+}
+
 static void pollSession(HWND window)
 {
     static BOOL confirmationShown;
     SessionStatus snapshot;
     WCHAR question[512];
     session_status(&snapshot);
+    pollNotifications(window, &snapshot);
     syncSavedDevices(window, &snapshot);
     pollClipboard(window, &snapshot);
     if (snapshot.phase != SESSION_CONFIRM) confirmationShown = FALSE;
@@ -393,6 +458,7 @@ static HMENU createMenu(void)
     HMENU device = CreatePopupMenu();
     HMENU edit = CreatePopupMenu();
     HMENU help = CreatePopupMenu();
+    HMENU view = CreatePopupMenu();
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, L"Send file…");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
     AppendMenuW(file, MF_STRING, ID_EXIT, L"Exit");
@@ -405,10 +471,12 @@ static HMENU createMenu(void)
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SEND_CLIPBOARD, L"Send clipboard to phone");
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_RECEIVE_CLIPBOARD, L"Paste phone clipboard to PC\tCtrl+Shift+V");
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SYNC_CLIPBOARD, L"Sync text clipboard automatically");
+    AppendMenuW(view, MF_STRING, ID_NOTIFICATIONS, L"Notifications…");
     AppendMenuW(help, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"File");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)edit, L"Edit");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, L"Device");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)view, L"View");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"Help");
     return menu;
 }
@@ -425,6 +493,7 @@ static void addTray(HWND window)
     tray.hIcon = icons[0];
     lstrcpynW(tray.szTip, L"Connect95", ARRAYSIZE(tray.szTip));
     trayAdded = Shell_NotifyIconW(NIM_ADD, &tray);
+    balloonBusy = FALSE;
 }
 
 static void restoreWindow(HWND window)
@@ -438,6 +507,7 @@ static void trayMenu(HWND window)
     POINT position;
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, ID_SHOW, L"Open Connect95");
+    AppendMenuW(menu, MF_STRING, ID_NOTIFICATIONS, L"Notifications…");
     AppendMenuW(menu, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, ID_EXIT, L"Exit");
@@ -600,11 +670,16 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     switch (message) {
     case WM_CREATE:
         if (!createControls(window)) return -1;
+        DeleteMenu(GetSystemMenu(window, FALSE), SC_MAXIMIZE, MF_BYCOMMAND);
         addTray(window);
         startDiscovery(window);
         SetTimer(window, 1, 500, NULL);
         return 0;
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xfff0) == SC_MAXIMIZE) return 0;
+        break;
     case WM_SIZE:
+        if (wParam == SIZE_MAXIMIZED) { ShowWindow(window, SW_RESTORE); return 0; }
         if (wParam == SIZE_MINIMIZED && trayAdded) ShowWindow(window, SW_HIDE);
         else layout(window);
         return 0;
@@ -636,6 +711,10 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_NOTIFICATIONS:
+            restoreWindow(window);
+            notifications_ui_show(window, normalFont, NULL);
+            break;
         case ID_CLIPBOARD: clipboardMenu(window); break;
         case ID_SEND_CLIPBOARD: sendClipboard(window, FALSE); break;
         case ID_RECEIVE_CLIPBOARD: if (pairedSelection()) receiveClipboard(window, TRUE); break;
@@ -673,7 +752,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.6.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.7.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
                 "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
@@ -681,13 +760,22 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         }
         return 0;
     case WM_TRAY:
-        if (lParam == WM_LBUTTONDBLCLK) restoreWindow(window);
+        if (lParam == NIN_BALLOONUSERCLICK) {
+            balloonBusy = FALSE;
+            balloonEnded = GetTickCount();
+            restoreWindow(window);
+            notifications_ui_show(window, normalFont, balloonId);
+        } else if (lParam == NIN_BALLOONTIMEOUT || lParam == NIN_BALLOONHIDE) {
+            balloonBusy = FALSE;
+            balloonEnded = GetTickCount();
+        } else if (lParam == WM_LBUTTONDBLCLK) restoreWindow(window);
         else if (lParam == WM_RBUTTONUP) trayMenu(window);
         return 0;
     case WM_CLOSE:
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        notifications_ui_close();
         KillTimer(window, 1);
         session_stop();
         discovery_stop();
@@ -713,7 +801,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     clipboardSequence = GetClipboardSequenceNumber();
     session_init();
     common.dwSize = sizeof(common);
-    common.dwICC = ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
+    common.dwICC = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
     if (!InitCommonControlsEx(&common)) return 1;
     icons[0] = loadSystemIcon(17, 101);
     icons[1] = loadSystemIcon(4, 102);
@@ -730,7 +818,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
     cls.lpszClassName = L"Connect95.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
-    window = CreateWindowExW(0, cls.lpszClassName, L"Connect95", WS_OVERLAPPEDWINDOW,
+    window = CreateWindowExW(0, cls.lpszClassName, L"Connect95", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 660, 360, NULL, createMenu(), instance, NULL);
     if (!window) {
         MessageBoxW(NULL, L"Could not create the Connect95 window.", L"Connect95", MB_ICONERROR);
@@ -740,7 +828,8 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     ShowWindow(window, show);
     UpdateWindow(window);
     while ((result = GetMessageW(&message, NULL, 0, 0)) > 0) {
-        if (!shortcuts || !TranslateAcceleratorW(window, shortcuts, &message)) {
+        if (!shortcuts || (message.hwnd != window && !IsChild(window, message.hwnd)) ||
+            !TranslateAcceleratorW(window, shortcuts, &message)) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
