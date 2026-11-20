@@ -1,6 +1,7 @@
 #ifndef CONNECT95_SESSION_H
 #define CONNECT95_SESSION_H
 #include "discovery.h"
+#include "device_plugins.h"
 enum { SESSION_IDLE, SESSION_BUSY, SESSION_WAIT_PHONE, SESSION_CONFIRM,
        SESSION_PAIRED, SESSION_ERROR, SESSION_CLOSED };
 typedef struct {
@@ -8,6 +9,10 @@ typedef struct {
     char deviceId[39];
     WCHAR text[256];
     WCHAR code[9];
+    int batteryCharge;
+    BOOL batteryCharging;
+    BOOL clipboardSync;
+    unsigned int clipboardRevision;
     BOOL transferActive;
     int transferPercent;
     WCHAR transferText[512];
@@ -22,4 +27,7 @@ void session_free(void);
 int session_ring(void);
 int session_send_file(const WCHAR *path);
 void session_cancel_transfer(void);
+int session_send_clipboard(const char *content, BOOL automatic);
+int session_received_clipboard(ClipboardMessage *message);
+void session_clipboard_sync(BOOL enabled);
 #endif

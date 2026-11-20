@@ -1,5 +1,6 @@
 #include "pairing.h"
 #include "share_info.h"
+#include "device_plugins.h"
 #include <mbedtls/ssl.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
@@ -93,6 +94,60 @@ static void test_sharing(void)
     assert(offer("{\"type\":\"kdeconnect.findmyphone.request\",\"body\":{}}", &info) == 0);
 }
 
+static void test_device_plugins(void)
+{
+    cJSON *packet, *parsed;
+    ClipboardMessage message;
+    int charge, charging;
+    char text[CLIPBOARD_MAX_BYTES + 2];
+    char *encoded;
+    const char *battery = "{\"type\":\"kdeconnect.battery\",\"body\":{\"currentCharge\":78,\"isCharging\":true}}";
+    packet = packet_parse(battery, strlen(battery));
+    assert(packet && plugin_battery(packet, &charge, &charging));
+    assert(charge == 78 && charging);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(packet, "body"), "currentCharge"), -1);
+    assert(plugin_battery(packet, &charge, &charging) && charge == -1);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(packet, "body"), "currentCharge"), 100.5);
+    assert(!plugin_battery(packet, &charge, &charging));
+    cJSON_Delete(packet);
+    packet = plugin_clipboard_packet("Hello \xe2\x98\x83\n");
+    assert(packet && plugin_clipboard(packet, &message));
+    assert(!strcmp(message.content, "Hello \xe2\x98\x83\n") && !message.initial);
+    cJSON_Delete(packet);
+    packet = plugin_clipboard_packet("");
+    assert(packet && plugin_clipboard(packet, &message) && !message.content[0]);
+    cJSON_Delete(packet);
+    packet = plugin_clipboard_packet("literal \\u0000 text");
+    encoded = cJSON_PrintUnformatted(packet);
+    parsed = packet_parse(encoded, strlen(encoded));
+    assert(parsed && plugin_clipboard(parsed, &message) && !strcmp(message.content, "literal \\u0000 text"));
+    cJSON_Delete(parsed);
+    cJSON_free(encoded);
+    cJSON_Delete(packet);
+    memset(text, 1, CLIPBOARD_MAX_BYTES);
+    text[CLIPBOARD_MAX_BYTES] = 0;
+    packet = plugin_clipboard_packet(text);
+    assert(packet);
+    encoded = cJSON_PrintUnformatted(packet);
+    assert(strlen(encoded) < PACKET_MAX_SIZE);
+    parsed = packet_parse(encoded, strlen(encoded));
+    assert(parsed && plugin_clipboard(parsed, &message) && !strcmp(message.content, text));
+    cJSON_Delete(parsed);
+    cJSON_free(encoded);
+    cJSON_Delete(packet);
+    text[CLIPBOARD_MAX_BYTES] = 'a';
+    text[CLIPBOARD_MAX_BYTES + 1] = 0;
+    assert(!plugin_clipboard_packet(text));
+    {
+        const char *initial = "{\"type\":\"kdeconnect.clipboard.connect\",\"body\":{\"content\":\"hi\",\"timestamp\":1700000000123}}";
+        packet = packet_parse(initial, strlen(initial));
+        assert(packet && plugin_clipboard(packet, &message) && message.initial && message.timestamp == 1700000000123ULL);
+        cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(packet, "body"), "timestamp"), 0);
+        assert(!plugin_clipboard(packet, &message));
+        cJSON_Delete(packet);
+    }
+}
+
 int main(int argc, char **argv)
 {
     mbedtls_x509_crt certificates[2], restored;
@@ -109,6 +164,7 @@ int main(int argc, char **argv)
     const char *pair = "{\"type\":\"kdeconnect.pair\",\"body\":{\"pair\":true}}\n";
     assert(argc == 6);
     test_sharing();
+    test_device_plugins();
     assert(psa_crypto_init() == PSA_SUCCESS);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&random);
@@ -206,6 +262,6 @@ int main(int argc, char **argv)
     mbedtls_x509_crt_free(&restored);
     mbedtls_ctr_drbg_free(&random);
     mbedtls_entropy_free(&entropy);
-    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair/share packets, bidirectional binary payloads");
+    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair/share/battery/clipboard packets, bidirectional binary payloads");
     return 0;
 }

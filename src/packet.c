@@ -1,5 +1,4 @@
 #include "packet.h"
-#include "identity.h"
 #include <string.h>
 #include <time.h>
 
@@ -19,9 +18,13 @@ cJSON *packet_parse(const char *line, size_t length)
     const cJSON *type, *body;
     const char *end;
     size_t i;
-    if (!line || !length || length > IDENTITY_MAX_PACKET) return NULL;
+    if (!line || !length || length > PACKET_MAX_SIZE) return NULL;
     for (i = 0; i < length; ++i) {
-        if (!line[i] || (line[i] == '\\' && i + 5 < length && !memcmp(line + i, "\\u0000", 6))) return NULL;
+        if (!line[i]) return NULL;
+        if (line[i] == '\\') {
+            if (i + 5 < length && !memcmp(line + i, "\\u0000", 6)) return NULL;
+            if (i + 1 < length) ++i;
+        }
     }
     packet = cJSON_ParseWithLengthOpts(line, length, &end, 0);
     if (!packet) return NULL;

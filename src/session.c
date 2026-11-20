@@ -17,6 +17,9 @@ static BOOL accepted, ringPending;
 static HANDLE transferCancel;
 static WCHAR pendingPath[MAX_PATH];
 static SessionStatus status;
+static ClipboardMessage receivedClipboard;
+static char pendingClipboard[CLIPBOARD_MAX_BYTES + 1];
+static BOOL clipboardPending, clipboardAutomatic;
 static DiscoveryPeer target;
 
 static void update(int phase, const WCHAR *text)
@@ -56,10 +59,18 @@ static void transfer_finished(const WCHAR *error, const WCHAR *success)
 
 static int process_commands(Connection *connection, Credentials *credentials)
 {
-    BOOL ring;
+    BOOL ring, sendClipboard, automaticClipboard = FALSE;
+    char clipboard[CLIPBOARD_MAX_BYTES + 1];
     WCHAR path[MAX_PATH];
     TransferContext context = {connection, credentials, &target, transferCancel, transfer_progress};
     EnterCriticalSection(&guard);
+    sendClipboard = clipboardPending;
+    if (sendClipboard) {
+        strcpy(clipboard, pendingClipboard);
+        automaticClipboard = clipboardAutomatic;
+        SecureZeroMemory(pendingClipboard, sizeof(pendingClipboard));
+        clipboardPending = FALSE;
+    }
     ring = ringPending;
     ringPending = FALSE;
     lstrcpyW(path, pendingPath);
@@ -69,6 +80,19 @@ static int process_commands(Connection *connection, Credentials *credentials)
         cJSON *packet = packet_create("kdeconnect.findmyphone.request");
         int result = packet && transport_json(connection, packet, TRUE);
         cJSON_Delete(packet);
+        if (!result) return 0;
+    }
+    if (sendClipboard && automaticClipboard) {
+        EnterCriticalSection(&guard);
+        sendClipboard = status.clipboardSync;
+        LeaveCriticalSection(&guard);
+        if (!sendClipboard) SecureZeroMemory(clipboard, sizeof(clipboard));
+    }
+    if (sendClipboard) {
+        cJSON *packet = plugin_clipboard_packet(clipboard);
+        int result = packet && transport_json(connection, packet, TRUE);
+        cJSON_Delete(packet);
+        SecureZeroMemory(clipboard, sizeof(clipboard));
         if (!result) return 0;
     }
     if (path[0]) transfer_finished(transfer_send(&context, path), L"File sent to the phone.");
@@ -104,6 +128,11 @@ static cJSON *identity_packet(Credentials *credentials)
         !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
         !(outgoing = cJSON_AddArrayToObject(body, "outgoingCapabilities")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.share.request")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.battery")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.clipboard")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.clipboard.connect")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.battery.request")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.clipboard")) ||
         !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.share.request")) ||
         !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.findmyphone.request"))) {
         cJSON_Delete(packet);
@@ -131,7 +160,8 @@ static unsigned __stdcall run_session(void *argument)
     WSADATA winsock;
     const mbedtls_x509_crt *peerCertificate;
     cJSON *packet = NULL;
-    char line[IDENTITY_MAX_PACKET + 1];
+    char line[PACKET_MAX_SIZE + 1];
+    BOOL batteryRequested = FALSE;
     size_t used = 0;
     DWORD deadline, partialSince = 0;
     int result, pinned, phase = SESSION_BUSY;
@@ -179,6 +209,14 @@ static unsigned __stdcall run_session(void *argument)
     failure = L"TLS connection closed. Select Pair / connect to reconnect.";
     while (!cancelled()) {
         unsigned char byte;
+        if (phase == SESSION_PAIRED && !batteryRequested) {
+            cJSON *request = packet_create("kdeconnect.battery.request");
+            cJSON *body = cJSON_GetObjectItemCaseSensitive(request, "body");
+            int sent = request && cJSON_AddBoolToObject(body, "request", TRUE) && transport_json(&connection, request, TRUE);
+            cJSON_Delete(request);
+            if (!sent) goto finish;
+            batteryRequested = TRUE;
+        }
         if (!used && phase == SESSION_PAIRED && !process_commands(&connection, &credentials)) goto finish;
         if (phase == SESSION_WAIT_PHONE && (DWORD)(GetTickCount() - deadline) > 30000) {
             send_pair(&connection, FALSE);
@@ -196,7 +234,7 @@ static unsigned __stdcall run_session(void *argument)
         }
         if (result <= 0) goto finish;
         if (!used) partialSince = GetTickCount();
-        if (!byte || used == IDENTITY_MAX_PACKET) {
+        if (!byte || used == PACKET_MAX_SIZE) {
             failure = L"The phone sent an invalid or oversized packet.";
             goto finish;
         }
@@ -236,6 +274,26 @@ static unsigned __stdcall run_session(void *argument)
             ShareInfo offer;
             cJSON *received = packet_parse(line, used);
             int sharing = share_info(received, &offer);
+            int charge, charging;
+            ClipboardMessage clipboard;
+            if (plugin_battery(received, &charge, &charging)) {
+                EnterCriticalSection(&guard);
+                status.batteryCharge = charge;
+                status.batteryCharging = charging;
+                LeaveCriticalSection(&guard);
+            }
+            if (plugin_clipboard(received, &clipboard)) {
+                WCHAR check[CLIPBOARD_MAX_BYTES + 1];
+                if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, clipboard.content, -1, check, ARRAYSIZE(check))) {
+                    EnterCriticalSection(&guard);
+                    receivedClipboard = clipboard;
+                    ++status.clipboardRevision;
+                    if (!status.clipboardRevision) ++status.clipboardRevision;
+                    receivedClipboard.revision = status.clipboardRevision;
+                    LeaveCriticalSection(&guard);
+                }
+                SecureZeroMemory(&clipboard, sizeof(clipboard));
+            }
             cJSON_Delete(received);
             if (sharing > 0) receive_share(&connection, &credentials, &offer);
             else if (sharing < 0) transfer_finished(L"The incoming file announcement is invalid or unsupported.", NULL);
@@ -248,6 +306,12 @@ finish:
     status.transferActive = FALSE;
     pendingPath[0] = 0;
     ringPending = FALSE;
+    clipboardPending = FALSE;
+    status.clipboardSync = FALSE;
+    status.clipboardRevision = 0;
+    status.batteryCharge = -1;
+    SecureZeroMemory(pendingClipboard, sizeof(pendingClipboard));
+    SecureZeroMemory(&receivedClipboard, sizeof(receivedClipboard));
     LeaveCriticalSection(&guard);
     cJSON_Delete(packet);
     transport_close(&connection);
@@ -268,6 +332,7 @@ no_winsock:
 void session_init(void)
 {
     InitializeCriticalSection(&guard);
+    status.batteryCharge = -1;
     cancelEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     confirmEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     transferCancel = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -305,6 +370,7 @@ int session_start(const DiscoveryPeer *peer)
     target = *peer;
     EnterCriticalSection(&guard);
     ZeroMemory(&status, sizeof(status));
+    status.batteryCharge = -1;
     strcpy(status.deviceId, peer->identity.id);
     status.phase = SESSION_BUSY;
     lstrcpyW(status.text, L"Connecting…");
@@ -370,5 +436,41 @@ void session_cancel_transfer(void)
 {
     EnterCriticalSection(&guard);
     if (status.transferActive) SetEvent(transferCancel);
+    LeaveCriticalSection(&guard);
+}
+
+int session_send_clipboard(const char *content, BOOL automatic)
+{
+    int ready;
+    if (strlen(content) > CLIPBOARD_MAX_BYTES) return 0;
+    EnterCriticalSection(&guard);
+    ready = status.phase == SESSION_PAIRED && (!automatic || status.clipboardSync);
+    if (ready) {
+        strcpy(pendingClipboard, content);
+        clipboardPending = TRUE;
+        clipboardAutomatic = automatic;
+    }
+    LeaveCriticalSection(&guard);
+    return ready;
+}
+
+int session_received_clipboard(ClipboardMessage *message)
+{
+    int ready;
+    EnterCriticalSection(&guard);
+    ready = status.phase == SESSION_PAIRED && status.clipboardRevision != 0;
+    if (ready) *message = receivedClipboard;
+    LeaveCriticalSection(&guard);
+    return ready;
+}
+
+void session_clipboard_sync(BOOL enabled)
+{
+    EnterCriticalSection(&guard);
+    status.clipboardSync = enabled && status.phase == SESSION_PAIRED;
+    if (!status.clipboardSync && clipboardAutomatic) {
+        clipboardPending = FALSE;
+        SecureZeroMemory(pendingClipboard, sizeof(pendingClipboard));
+    }
     LeaveCriticalSection(&guard);
 }

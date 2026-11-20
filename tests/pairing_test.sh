@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 MBEDTLS_SOURCE_DIR=.deps/mbedtls-host CC="${HOST_CC:-cc}" AR=ar tools/build-mbedtls.sh
 "${HOST_CC:-cc}" -std=c99 -Wall -Wextra -Werror -O1 -DCJSON_NESTING_LIMIT=32 \
     -DMBEDTLS_USER_CONFIG_FILE='"tls_config.h"' -Isrc -I.deps/mbedtls-host/include \
-    tests/pairing_test.c src/pairing.c src/packet.c src/share_info.c src/vendor/cJSON.c \
+    tests/pairing_test.c src/pairing.c src/packet.c src/share_info.c src/device_plugins.c src/vendor/cJSON.c \
     .deps/mbedtls-host/library/libmbedtls.a .deps/mbedtls-host/library/libmbedx509.a \
     .deps/mbedtls-host/library/libmbedcrypto.a -o build/pairing-test
 fixture_dir=$(mktemp -d)

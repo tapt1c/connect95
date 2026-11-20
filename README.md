@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.4.0 has an English interface, native Windows shell icons, a compact
+Version 0.5.0 has an English interface, native Windows shell icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
 The Pair / connect button is wider. Luna appearance follows the Windows theme.
 
@@ -42,7 +42,7 @@ end-of-stream. The interface displays progress and provides **Cancel**.
 
 Files are processed sequentially. A find-phone request made during a transfer is
 queued until that transfer completes. For reliable transfers, start one direction
-at a time. Clipboard synchronization and battery reporting are pending.
+at a time. Battery reporting and text clipboard actions are available after connecting.
 
 Allow incoming UDP 1716 for discovery and incoming TCP 1739–1764 for sending
 files from the PC. File downloads connect to the paired phone's announced port.
@@ -51,6 +51,29 @@ Restrict the application firewall exception to the local network.
 After upgrading, close the old executable, start the new one, and reconnect so
 Android receives the updated plugin capabilities. Existing pairing is stored in
 the user profile and can be reused.
+
+## Battery and clipboard
+
+The phone battery percentage and charging status appear below the connection
+status. Battery updates are accepted only from the paired TLS connection.
+
+The **Clipboard** button opens a menu with these actions.
+
+- **Send PC clipboard to phone** sends the current plain-text clipboard.
+- **Apply latest phone clipboard** copies the latest text received from the phone onto the PC clipboard.
+- **Sync text clipboard automatically** enables two-way synchronization for this connection.
+
+Automatic synchronization defaults to off and resets on reconnect. Manual
+clipboard actions remain available while synchronization is off. Incoming
+connection-time clipboard packets honor their timestamps during automatic sync.
+The client ignores its own clipboard writes to prevent echo loops. The clipboard
+is polled using `GetClipboardSequenceNumber`, which is available on Windows XP.
+
+Text is limited to 8 KiB of UTF-8, including empty strings and multiline Unicode.
+Clipboard images and file lists are outside these text actions. Android may
+require its explicit **Send clipboard** action for phone-to-PC updates because
+background clipboard access is restricted by Android. Clipboard updates made
+while a file transfer is running are queued, with the latest queued text retained.
 
 ## Windows XP support
 
@@ -66,7 +89,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.4.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.5.0 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
@@ -105,11 +128,14 @@ The pairing tests require a native C compiler, OpenSSL CLI, and Python 3. They
 build native Mbed TLS in `.deps/mbedtls-host` and generate temporary certificates.
 Tests cover TLS 1.2, binary payloads in both directions, verification codes checked
 against an independent hash, certificate identity errors, PEM reloading, malformed
-packets, file metadata, empty files, large sizes, and unsafe Windows filenames.
+packets, file metadata, empty files, large sizes, unsafe Windows filenames, battery fields, clipboard
+limits, escaped text, and connection-time clipboard timestamps.
 
 Manual checks cover pairing, reconnect, file transfer in both directions, empty
 and large files, non-ASCII names, repeated names, cancellation, disconnect during
-transfer, finding the phone, menu actions, tray restore, and the About dialog.
+transfer, finding the phone, battery/charging updates, clipboard actions in both directions,
+automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
+and the About dialog.
 
 The protocol was checked against KDE Connect sources at commit
 `6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.

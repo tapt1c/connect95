@@ -1,5 +1,6 @@
 #include "discovery.h"
 #include "session.h"
+#include "clipboard.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -18,6 +19,9 @@
 #define ID_DISCONNECT 222
 #define ID_FORGET 223
 #define ID_CANCEL_TRANSFER 224
+#define ID_RECEIVE_CLIPBOARD 225
+#define ID_SYNC_CLIPBOARD 226
+#define ID_SEND_CLIPBOARD 227
 #define MAX_PEERS 64
 
 static HINSTANCE instance;
@@ -30,6 +34,9 @@ static BOOL trayAdded;
 static UINT taskbarCreated;
 static DiscoveryPeer peers[MAX_PEERS];
 static int peerCount;
+static DWORD clipboardSequence;
+static uint64_t localClipboardTime;
+static unsigned int appliedClipboard;
 
 static void showPeer(void)
 {
@@ -42,6 +49,17 @@ static void showPeer(void)
              !strcmp(session.deviceId, peers[selected].identity.id);
     EnableWindow(sendButton, paired && !session.transferActive);
     EnableWindow(ringButton, paired);
+    EnableWindow(clipboardButton, paired);
+    CheckMenuItem(GetMenu(GetParent(devices)), ID_SYNC_CLIPBOARD,
+                  MF_BYCOMMAND | (session.clipboardSync ? MF_CHECKED : MF_UNCHECKED));
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND_CLIPBOARD, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_RECEIVE_CLIPBOARD,
+                   MF_BYCOMMAND | (paired && session.clipboardRevision ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_SYNC_CLIPBOARD, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
+    if (paired && session.batteryCharge >= 0) {
+        wsprintfW(description, L"Battery %d%%%s", session.batteryCharge, session.batteryCharging ? L" (charging)" : L"");
+        SetWindowTextW(battery, description);
+    } else SetWindowTextW(battery, L"Battery —");
     EnableWindow(cancelTransferButton, paired && session.transferActive);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND, MF_BYCOMMAND | (paired && !session.transferActive ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(GetMenu(GetParent(devices)), ID_RING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
@@ -85,6 +103,7 @@ static void pairSelected(HWND window)
         MessageBoxW(window, L"This release supports pairing with protocol 7. Protocol 8 pairing is under development.", L"Connect95", MB_OK | MB_ICONINFORMATION);
         return;
     }
+    appliedClipboard = 0;
     if (!session_start(&peers[selected]))
         MessageBoxW(window, L"Could not start the connection.", L"Connect95", MB_OK | MB_ICONERROR);
     showPeer();
@@ -117,12 +136,87 @@ static void sendFile(HWND window)
     showPeer();
 }
 
+static void sendClipboard(HWND window, BOOL automatic)
+{
+    char text[CLIPBOARD_MAX_BYTES + 1];
+    int read;
+    if (!pairedSelection()) return;
+    read = clipboard_read(window, text);
+    if (read == 1 && !session_send_clipboard(text, automatic)) read = -1;
+    SecureZeroMemory(text, sizeof(text));
+    if (read != 1 && !automatic)
+        MessageBoxW(window, read == 0 ? L"The clipboard is busy. Please try again." :
+            L"Copy plain text of up to 8 KiB (UTF-8) before sending it.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+}
+
+static int receiveClipboard(HWND window, BOOL manual)
+{
+    ClipboardMessage message;
+    int result;
+    if (!session_received_clipboard(&message)) return -1;
+    if (!manual && message.initial && message.timestamp <= localClipboardTime) {
+        appliedClipboard = message.revision;
+        SecureZeroMemory(&message, sizeof(message));
+        return 1;
+    }
+    result = clipboard_write(window, message.content);
+    if (result == 1) {
+        appliedClipboard = message.revision;
+        localClipboardTime = message.initial ? message.timestamp : clipboard_time();
+        /* Ignore our own clipboard update when checking for outgoing changes. */
+        clipboardSequence = GetClipboardSequenceNumber();
+    }
+    SecureZeroMemory(&message, sizeof(message));
+    if (manual && result != 1)
+        MessageBoxW(window, L"Cannot update the clipboard. Please try again.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+    return result;
+}
+
+static void pollClipboard(HWND window, const SessionStatus *snapshot)
+{
+    DWORD sequence = GetClipboardSequenceNumber();
+    BOOL automatic = snapshot->phase == SESSION_PAIRED && snapshot->clipboardSync;
+    if (sequence != clipboardSequence) {
+        char text[CLIPBOARD_MAX_BYTES + 1];
+        int read = -1;
+        localClipboardTime = clipboard_time();
+        if (automatic) {
+            read = clipboard_read(window, text);
+            if (read == 1) session_send_clipboard(text, TRUE);
+            SecureZeroMemory(text, sizeof(text));
+        }
+        if (read != 0) clipboardSequence = sequence;
+    }
+    if (automatic && snapshot->clipboardRevision && snapshot->clipboardRevision != appliedClipboard)
+        receiveClipboard(window, FALSE);
+    if (snapshot->phase != SESSION_PAIRED) appliedClipboard = 0;
+}
+
+static void clipboardMenu(HWND window)
+{
+    RECT rect;
+    HMENU menu = CreatePopupMenu();
+    SessionStatus snapshot;
+    if (!pairedSelection()) { DestroyMenu(menu); return; }
+    session_status(&snapshot);
+    AppendMenuW(menu, MF_STRING, ID_SEND_CLIPBOARD, L"Send PC clipboard to phone");
+    AppendMenuW(menu, MF_STRING | (snapshot.clipboardRevision ? 0 : MF_GRAYED),
+                ID_RECEIVE_CLIPBOARD, L"Apply latest phone clipboard");
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING | (snapshot.clipboardSync ? MF_CHECKED : 0), ID_SYNC_CLIPBOARD,
+                L"Sync text clipboard automatically");
+    GetWindowRect(clipboardButton, &rect);
+    TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, rect.left, rect.bottom, 0, window, NULL);
+    DestroyMenu(menu);
+}
+
 static void pollSession(HWND window)
 {
     static BOOL confirmationShown;
     SessionStatus snapshot;
     WCHAR question[512];
     session_status(&snapshot);
+    pollClipboard(window, &snapshot);
     if (snapshot.phase != SESSION_CONFIRM) confirmationShown = FALSE;
     if (snapshot.phase == SESSION_CONFIRM && !confirmationShown) {
         confirmationShown = TRUE;
@@ -223,7 +317,9 @@ static HMENU createMenu(void)
     AppendMenuW(device, MF_STRING, ID_FORGET, L"Forget pairing on this PC…");
     AppendMenuW(device, MF_SEPARATOR, 0, NULL);
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Find phone");
-    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_CLIPBOARD, L"Clipboard");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_SEND_CLIPBOARD, L"Send clipboard to phone");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RECEIVE_CLIPBOARD, L"Apply phone clipboard");
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_SYNC_CLIPBOARD, L"Sync text clipboard automatically");
     AppendMenuW(help, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"File");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, L"Device");
@@ -353,7 +449,7 @@ static BOOL createControls(HWND window)
     pairButton = control(window, L"BUTTON", L"Pair / connect", BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_PAIR);
     sendButton = control(window, L"BUTTON", L"Send file", BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_SEND);
     ringButton = control(window, L"BUTTON", L"Find phone", BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_RING);
-    clipboardButton = control(window, L"BUTTON", L"Clipboard", BS_OWNERDRAW | WS_DISABLED, ID_CLIPBOARD);
+    clipboardButton = control(window, L"BUTTON", L"Clipboard", BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_CLIPBOARD);
     transferBox = control(window, L"BUTTON", L"File transfers", BS_GROUPBOX, 0);
     transferText = control(window, L"STATIC", L"No active transfers", SS_LEFT, 0);
     cancelTransferButton = control(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_CANCEL_TRANSFER);
@@ -411,6 +507,19 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_CLIPBOARD: clipboardMenu(window); break;
+        case ID_SEND_CLIPBOARD: sendClipboard(window, FALSE); break;
+        case ID_RECEIVE_CLIPBOARD: if (pairedSelection()) receiveClipboard(window, TRUE); break;
+        case ID_SYNC_CLIPBOARD: {
+            SessionStatus snapshot;
+            session_status(&snapshot);
+            if (pairedSelection()) {
+                clipboardSequence = GetClipboardSequenceNumber();
+                session_clipboard_sync(!snapshot.clipboardSync);
+                showPeer();
+            }
+            break;
+        }
         case ID_SEND: sendFile(window); break;
         case ID_RING: if (pairedSelection()) session_ring(); break;
         case ID_CANCEL_TRANSFER: session_cancel_transfer(); break;
@@ -430,10 +539,10 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.4.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.5.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
-                "Files and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
+                "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
             break;
         }
         return 0;
@@ -465,6 +574,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     (void)previous;
     (void)command;
     instance = current;
+    clipboardSequence = GetClipboardSequenceNumber();
     session_init();
     common.dwSize = sizeof(common);
     common.dwICC = ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
