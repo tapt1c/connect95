@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.7.0 has an English interface, native Windows shell icons, a compact
+Version 0.8.0 has an English interface, native Windows shell icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
 The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
 
@@ -22,6 +22,20 @@ The phone certificate is pinned after confirmation. A changed certificate stops
 reconnection. **Device → Disconnect** preserves trust. **Device → Forget pairing
 on this PC…** removes the local pin, allowing a new pairing request. Compare the
 code again when pairing with a new certificate.
+
+## PC device name
+
+Choose **Edit → PC device name…** to set the name shown for this PC in KDE Connect
+on the phone. Names support Unicode and up to 32 UTF-16 code units. The dialog
+checks characters filtered by KDE Connect and reports invalid input.
+
+The preference is stored as `DeviceName` under `HKEY_CURRENT_USER\Software\Connect95`.
+An unset preference uses **Connect95**. An idle paired connection reconnects after
+saving a changed name. During a file transfer, reconnect waits until completion.
+When disconnected, the configured name is used on the next connection.
+
+The existing device identity and pinned certificates provide authentication on
+reconnect. The name is copied into the outgoing identity packet when connecting.
 
 ## Saved devices
 
@@ -143,7 +157,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.7.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.8.0 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
@@ -193,7 +207,8 @@ transfer, finding the phone, battery/charging updates, clipboard actions in both
 automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
 the About dialog, saved-device persistence across restart, offline selection,
 group migration after pairing/forgetting, Ctrl+Shift+V clipboard import, notification updates/cancellations, silent initial
-sync, balloon clicks, and disabled maximize commands.
+sync, balloon clicks, disabled maximize commands, custom names including Cyrillic text, restart
+persistence, and renaming during a file transfer.
 
 The protocol was checked against KDE Connect sources at commit
 `6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.

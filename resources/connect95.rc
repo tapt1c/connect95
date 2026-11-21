@@ -5,8 +5,8 @@
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,7,0,0
-PRODUCTVERSION 0,7,0,0
+FILEVERSION 0,8,0,0
+PRODUCTVERSION 0,8,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -16,11 +16,24 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "Connect95\0"
    VALUE "ProductName", "Connect95\0"
-   VALUE "FileVersion", "0.7.0\0"
+   VALUE "FileVersion", "0.8.0\0"
   END
  END
  BLOCK "VarFileInfo"
  BEGIN
   VALUE "Translation", 0x0409, 1200
  END
+END
+
+#include "resource.h"
+IDD_DEVICE_NAME DIALOGEX 0, 0, 250, 100
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "PC device name"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT "Shown in KDE Connect on your phone. An idle connection reconnects after saving.", -1, 10, 10, 230, 24
+    LTEXT "Device name (up to 32 characters)", -1, 10, 38, 230, 10
+    EDITTEXT IDC_DEVICE_NAME, 10, 50, 230, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON "Save", IDOK, 124, 77, 55, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 185, 77, 55, 14
 END

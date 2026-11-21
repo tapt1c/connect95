@@ -3,6 +3,7 @@
 #include "clipboard.h"
 #include "saved_devices.h"
 #include "notifications_ui.h"
+#include "device_name.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -25,6 +26,7 @@
 #define ID_SYNC_CLIPBOARD 226
 #define ID_SEND_CLIPBOARD 227
 #define ID_NOTIFICATIONS 230
+#define ID_DEVICE_NAME 231
 #define MAX_PEERS 64
 #define DEVICE_PANE_WIDTH 175
 
@@ -39,6 +41,7 @@ static DWORD balloonStarted, balloonEnded;
 static unsigned int balloonGeneration;
 static char balloonId[NOTIFICATION_ID_BYTES + 1];
 static UINT taskbarCreated;
+static BOOL reconnectForName;
 static DiscoveryPeer peers[MAX_PEERS];
 static int peerCount;
 static HTREEITEM savedGroup, discoveredGroup, peerNodes[MAX_PEERS];
@@ -366,6 +369,19 @@ static void pollSession(HWND window)
     WCHAR question[512];
     session_status(&snapshot);
     pollNotifications(window, &snapshot);
+    if (reconnectForName && snapshot.phase == SESSION_PAIRED && !snapshot.transferActive) {
+        int i;
+        reconnectForName = FALSE;
+        for (i = 0; i < peerCount; ++i) {
+            if (!strcmp(peers[i].identity.id, snapshot.deviceId)) {
+                appliedClipboard = 0;
+                session_start(&peers[i]);
+                break;
+            }
+        }
+        session_status(&snapshot);
+    } else if (snapshot.phase == SESSION_IDLE || snapshot.phase == SESSION_ERROR || snapshot.phase == SESSION_CLOSED)
+        reconnectForName = FALSE;
     syncSavedDevices(window, &snapshot);
     pollClipboard(window, &snapshot);
     if (snapshot.phase != SESSION_CONFIRM) confirmationShown = FALSE;
@@ -468,6 +484,8 @@ static HMENU createMenu(void)
     AppendMenuW(device, MF_STRING, ID_FORGET, L"Forget pairing on this PC…");
     AppendMenuW(device, MF_SEPARATOR, 0, NULL);
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Find phone");
+    AppendMenuW(edit, MF_STRING, ID_DEVICE_NAME, L"PC device name…");
+    AppendMenuW(edit, MF_SEPARATOR, 0, NULL);
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SEND_CLIPBOARD, L"Send clipboard to phone");
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_RECEIVE_CLIPBOARD, L"Paste phone clipboard to PC\tCtrl+Shift+V");
     AppendMenuW(edit, MF_STRING | MF_GRAYED, ID_SYNC_CLIPBOARD, L"Sync text clipboard automatically");
@@ -711,6 +729,9 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_DEVICE_NAME:
+            if (device_name_dialog(window)) reconnectForName = TRUE;
+            break;
         case ID_NOTIFICATIONS:
             restoreWindow(window);
             notifications_ui_show(window, normalFont, NULL);
@@ -752,7 +773,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.7.0\r\n"
+            ShellAboutA(window, "Connect95", "Connect95 0.8.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
                 "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);

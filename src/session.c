@@ -3,6 +3,7 @@
 #include "pairing.h"
 #include "transport.h"
 #include "transfer.h"
+#include "device_name.h"
 #include "vendor/cJSON.h"
 #include <mbedtls/ssl.h>
 #include <psa/crypto.h>
@@ -23,6 +24,7 @@ static ClipboardMessage receivedClipboard;
 static char pendingClipboard[CLIPBOARD_MAX_BYTES + 1];
 static BOOL clipboardPending, clipboardAutomatic;
 static DiscoveryPeer target;
+static char localDeviceName[DEVICE_NAME_MAX * 4 + 1];
 
 static void update(int phase, const WCHAR *text)
 {
@@ -124,7 +126,7 @@ static cJSON *identity_packet(Credentials *credentials)
     if (!packet || !body || !cJSON_AddNumberToObject(packet, "id", (double)time(NULL) * 1000) ||
         !cJSON_AddStringToObject(packet, "type", "kdeconnect.identity") ||
         !cJSON_AddStringToObject(body, "deviceId", credentials->id) ||
-        !cJSON_AddStringToObject(body, "deviceName", "Connect95") ||
+        !cJSON_AddStringToObject(body, "deviceName", localDeviceName) ||
         !cJSON_AddStringToObject(body, "deviceType", "desktop") ||
         !cJSON_AddNumberToObject(body, "protocolVersion", 7) ||
         !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
@@ -392,6 +394,12 @@ int session_start(const DiscoveryPeer *peer)
     ResetEvent(confirmEvent);
     accepted = FALSE;
     target = *peer;
+    {
+        WCHAR name[DEVICE_NAME_MAX + 1];
+        device_name_load(name);
+        if (!WideCharToMultiByte(CP_UTF8, 0, name, -1, localDeviceName, sizeof(localDeviceName), NULL, NULL))
+            strcpy(localDeviceName, "Connect95");
+    }
     EnterCriticalSection(&guard);
     notification_store_clear(&notifications);
     ZeroMemory(&status, sizeof(status));
