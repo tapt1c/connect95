@@ -466,7 +466,7 @@ void jobs_show(HWND owner, HFONT font)
         historyDialog = CreateWindowExW(WS_EX_CONTROLPARENT, L"ConnectXP.TransferHistory", tr(L"Transfer history — ConnectXP"),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, placement.x, placement.y, placement.w, placement.h, owner, NULL, GetModuleHandleW(NULL), NULL);
     }
-    if (historyDialog) { ShowWindow(historyDialog, SW_RESTORE); SetForegroundWindow(historyDialog); }
+    if (historyDialog) ui_show_window(historyDialog);
 }
 
 static void show_transfer(HWND owner, HFONT font)

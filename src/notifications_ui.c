@@ -287,8 +287,7 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
     if (id && id[0]) shownRevision = (unsigned int)-1;
     session_status(&snapshot);
     notifications_ui_tick(&snapshot);
-    ShowWindow(notificationWindow, SW_RESTORE);
-    SetForegroundWindow(notificationWindow);
+    ui_show_window(notificationWindow);
 }
 
 void notifications_ui_close(void)

@@ -1,5 +1,12 @@
 #include "ui_layout.h"
 
+void ui_show_window(HWND window)
+{
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    else if (!IsWindowVisible(window)) ShowWindow(window, SW_SHOW);
+    SetForegroundWindow(window);
+}
+
 WindowPlacement ui_window_placement(HWND owner, int width, int height)
 {
     MONITORINFO monitor;

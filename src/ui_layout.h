@@ -5,4 +5,6 @@
 typedef struct { HWND window; UiRect rect; int visible; } UiPlacement;
 void ui_apply_layout(HWND owner, const UiPlacement *items, int count);
 WindowPlacement ui_window_placement(HWND owner, int width, int height);
+/* Raise an existing window without restoring a visible maximized window. */
+void ui_show_window(HWND window);
 #endif

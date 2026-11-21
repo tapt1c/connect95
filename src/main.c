@@ -712,8 +712,7 @@ static void addTray(HWND window)
 
 static void restoreWindow(HWND window)
 {
-    ShowWindow(window, SW_RESTORE);
-    SetForegroundWindow(window);
+    ui_show_window(window);
 }
 
 static void trayMenu(HWND window)
@@ -1112,7 +1111,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
             if (device_name_dialog(window)) { reconnectForName = TRUE; network_service_announce(); }
             break;
         case ID_NOTIFICATIONS:
-            restoreWindow(window);
+            if (IsIconic(window) || !IsWindowVisible(window)) restoreWindow(window);
             notifications_ui_show(window, normalFont, NULL);
             break;
         case ID_CLIPBOARD: clipboardMenu(window); break;
@@ -1227,7 +1226,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     singleton = CreateMutexW(NULL, FALSE, L"Local\\ConnectXP.Desktop");
     if (singleton && GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND running = FindWindowW(L"ConnectXP.MainWindow", NULL);
-        if (running) { ShowWindow(running, SW_RESTORE); SetForegroundWindow(running); }
+        if (running) ui_show_window(running);
         CloseHandle(singleton);
         return 0;
     }

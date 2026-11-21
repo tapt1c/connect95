@@ -232,5 +232,5 @@ const WCHAR *language_status(const WCHAR *english, WCHAR *buffer, int capacity)
 
 void language_about(HWND owner, HICON icon)
 {
-    ShellAboutW(owner, L"ConnectXP", tr(L"Author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP"), icon);
+    ShellAboutW(owner, L"ConnectXP 1.0", tr(L"Author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP"), icon);
 }

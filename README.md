@@ -2,7 +2,13 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.6 introduces an Explorer-style task pane, compact themed action buttons,
+**ConnectXP 1.0** — [portable ZIP](https://github.com/tapt1c/connect95/raw/refs/heads/main/releases/ConnectXP-1.0.0-x86.zip)
+· [standalone EXE](https://github.com/tapt1c/connect95/raw/refs/heads/main/releases/ConnectXP-1.0.0-x86.exe)
+· [release notes](releases/ConnectXP-1.0.0-NOTES.md)
+· [SHA-256](releases/ConnectXP-1.0.0-SHA256SUMS.txt)
+
+
+Version 1.0 includes an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
@@ -28,6 +34,9 @@ state and keyboard focus cues are retained. Each button's completed image is
 copied once, including its background and transparent corners. Layout moves
 explicitly discard old copied client pixels with SWP_NOCOPYBITS.
 History and notification windows also batch their layout updates.
+Opening Notifications, Transfer history or an already-running instance preserves
+the current window size and maximized state; restoration is requested only for
+an actually minimized window.
 
 On XP, Explorer task panes can be defined in the active theme's
 `Shell\<ColorScheme>\shellstyle.dll`, independently of the ExplorerBar msstyles
@@ -304,7 +313,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.6 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 1.0 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -367,7 +376,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.6 manual pass should also cover phone-initiated TLS reconnect with the
+The 1.0 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,

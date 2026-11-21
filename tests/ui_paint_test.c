@@ -13,7 +13,19 @@ static UINT redrawFlags;
 static UINT expectedItemState = 5;
 static int expectedX = 7, expectedY = 9;
 static int paintBegun, paintEnded;
+static int iconic, visible, maximized, restoreToMaximized, showCalls, shownCommand, foregroundCalls;
 static void draw(const DRAWITEMSTRUCT *item);
+
+BOOL IsIconic(HWND window) { (void)window; return iconic; }
+BOOL IsWindowVisible(HWND window) { (void)window; return visible; }
+BOOL ShowWindow(HWND window, int command)
+{
+    (void)window;
+    ++showCalls; shownCommand = command; visible = TRUE;
+    if (command == SW_RESTORE) { iconic = FALSE; maximized = restoreToMaximized; }
+    return TRUE;
+}
+BOOL SetForegroundWindow(HWND window) { (void)window; ++foregroundCalls; return TRUE; }
 
 HDC BeginPaint(HWND window, PAINTSTRUCT *paint)
 { assert(window == HANDLE(9)); paint->hdc = HANDLE(1); ++paintBegun; return paint->hdc; }
@@ -140,6 +152,22 @@ int main(void)
         assert(redrawn == 1 && (redrawFlags & RDW_UPDATENOW) && (redrawFlags & RDW_ALLCHILDREN));
         assert(i ? fallbackMoves == 2 && !ended : ended == 1 && !fallbackMoves);
     }
+    visible = TRUE; iconic = FALSE; maximized = TRUE;
+    ui_show_window(HANDLE(11));
+    assert(!showCalls && foregroundCalls == 1 && maximized);
+    maximized = FALSE;
+    ui_show_window(HANDLE(11));
+    assert(!showCalls && foregroundCalls == 2);
+    visible = FALSE; maximized = TRUE;
+    ui_show_window(HANDLE(11));
+    assert(showCalls == 1 && shownCommand == SW_SHOW && visible && maximized);
+    iconic = TRUE; visible = FALSE; restoreToMaximized = TRUE;
+    ui_show_window(HANDLE(11));
+    assert(showCalls == 2 && shownCommand == SW_RESTORE && visible && !iconic && maximized);
+    iconic = TRUE; restoreToMaximized = FALSE;
+    ui_show_window(HANDLE(11));
+    assert(showCalls == 3 && shownCommand == SW_RESTORE && !iconic && !maximized);
+    puts("Window activation checks passed (mock Win32): visible/maximized state, hidden windows and restoring from tray");
     puts("UI paint checks passed (mock Win32): suppressed erase, buffered full frames, GDI cleanup, allocation fallbacks and synchronous redraw");
     return 0;
 }

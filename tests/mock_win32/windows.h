@@ -52,6 +52,8 @@ typedef struct { HDC hdc; BOOL fErase; RECT rcPaint; } PAINTSTRUCT;
 #define RDW_UPDATENOW 0x0100
 #define MONITOR_DEFAULTTOPRIMARY 1
 #define SPI_GETWORKAREA 48
+#define SW_RESTORE 9
+#define SW_SHOW 5
 #define ZeroMemory(p,n) memset(p,0,n)
 HDC CreateCompatibleDC(HDC);
 HBITMAP CreateCompatibleBitmap(HDC,int,int);
@@ -79,4 +81,8 @@ BOOL RedrawWindow(HWND,const RECT*,void*,UINT);
 HMONITOR MonitorFromWindow(HWND,DWORD);
 BOOL GetMonitorInfoW(HMONITOR,MONITORINFO*);
 BOOL SystemParametersInfoW(UINT,UINT,void*,UINT);
+BOOL IsIconic(HWND);
+BOOL IsWindowVisible(HWND);
+BOOL ShowWindow(HWND,int);
+BOOL SetForegroundWindow(HWND);
 #endif
