@@ -12,4 +12,5 @@ typedef struct {
 } TransferContext;
 const WCHAR *transfer_send(TransferContext *context, const WCHAR *path);
 const WCHAR *transfer_receive(TransferContext *context, const ShareInfo *offer);
+int transfer_directory(WCHAR *directory);
 #endif

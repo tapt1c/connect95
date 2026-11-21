@@ -4,6 +4,8 @@
 #include "transport.h"
 #include "transfer.h"
 #include "device_name.h"
+#include "network_service.h"
+#include "media.h"
 #include "vendor/cJSON.h"
 #include <mbedtls/ssl.h>
 #include <psa/crypto.h>
@@ -25,7 +27,10 @@ static ClipboardMessage receivedClipboard;
 static char pendingClipboard[CLIPBOARD_MAX_BYTES + 1];
 static BOOL clipboardPending, clipboardAutomatic;
 static DiscoveryPeer target;
-static char localDeviceName[DEVICE_NAME_MAX * 4 + 1];
+static SOCKET incomingSocket = INVALID_SOCKET;
+static int requirePin;
+static TransferRecord completed[64];
+static int completedCount;
 
 static void update(int phase, const WCHAR *text)
 {
@@ -49,16 +54,32 @@ static void transfer_progress(const WCHAR *filename, ULONGLONG done, ULONGLONG t
     MultiByteToWideChar(CP_ACP, 0, numbers, -1, wideNumbers, ARRAYSIZE(wideNumbers));
     EnterCriticalSection(&guard);
     status.transferPercent = total && total != UINT64_MAX ? (int)((double)done / (double)total * 100) : 0;
+    lstrcpynW(status.transferName, filename, ARRAYSIZE(status.transferName));
+    status.transferDone = done;
+    status.transferTotal = total;
     wsprintfW(status.transferText, L"%.200s — %s", filename, wideNumbers);
     LeaveCriticalSection(&guard);
 }
 
 static void transfer_finished(const WCHAR *error, const WCHAR *success)
 {
+    TransferRecord *record;
     EnterCriticalSection(&guard);
     status.transferActive = FALSE;
+    status.transferSucceeded = error == NULL;
+    ++status.transferRevision;
     if (!error) status.transferPercent = 100;
     lstrcpynW(status.transferText, error ? error : success, ARRAYSIZE(status.transferText));
+    if (completedCount == 64) {
+        memmove(completed, completed + 1, 63 * sizeof(completed[0]));
+        --completedCount;
+    }
+    record = &completed[completedCount++];
+    lstrcpynW(record->name, status.transferName, ARRAYSIZE(record->name));
+    lstrcpynW(record->result, status.transferText, ARRAYSIZE(record->result));
+    record->receiving = status.transferReceiving;
+    record->succeeded = !error;
+    GetLocalTime(&record->time);
     LeaveCriticalSection(&guard);
 }
 
@@ -123,20 +144,30 @@ static void receive_share(Connection *connection, Credentials *credentials, cons
     }
     status.transferActive = TRUE;
     status.transferPercent = 0;
+    status.transferReceiving = TRUE;
+    status.transferStarted = GetTickCount();
+    status.transferName[0] = 0;
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, offer->filename, -1, status.transferName, ARRAYSIZE(status.transferName));
+    status.transferDone = status.transferTotal = 0;
     ResetEvent(transferCancel);
     LeaveCriticalSection(&guard);
     transfer_finished(transfer_receive(&context, offer), L"File saved in My Documents\\ConnectXP.");
 }
 
-static cJSON *identity_packet(Credentials *credentials)
+cJSON *session_identity_packet(const char *id, unsigned short port)
 {
+    WCHAR deviceName[DEVICE_NAME_MAX + 1];
+    char name[DEVICE_NAME_MAX * 4 + 1];
+    device_name_load(deviceName);
+    if (!WideCharToMultiByte(CP_UTF8, 0, deviceName, -1, name, sizeof(name), NULL, NULL)) strcpy(name, "ConnectXP");
     cJSON *packet = cJSON_CreateObject();
     cJSON *body = cJSON_AddObjectToObject(packet, "body");
     cJSON *incoming, *outgoing;
     if (!packet || !body || !cJSON_AddNumberToObject(packet, "id", (double)time(NULL) * 1000) ||
         !cJSON_AddStringToObject(packet, "type", "kdeconnect.identity") ||
-        !cJSON_AddStringToObject(body, "deviceId", credentials->id) ||
-        !cJSON_AddStringToObject(body, "deviceName", localDeviceName) ||
+        !cJSON_AddStringToObject(body, "deviceId", id) ||
+        !cJSON_AddStringToObject(body, "deviceName", name) ||
+        !cJSON_AddNumberToObject(body, "tcpPort", port ? port : 1716) ||
         !cJSON_AddStringToObject(body, "deviceType", "desktop") ||
         !cJSON_AddNumberToObject(body, "protocolVersion", 7) ||
         !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
@@ -144,6 +175,8 @@ static cJSON *identity_packet(Credentials *credentials)
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.share.request")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.ping")) ||
         !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.ping")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.mpris.request")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.mpris")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.notification")) ||
         !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.notification.request")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.battery")) ||
@@ -191,25 +224,30 @@ static unsigned __stdcall run_session(void *argument)
     transport_init(&connection, cancelEvent);
     credentials_init(&credentials);
     if (WSAStartup(MAKEWORD(2, 2), &winsock)) goto no_winsock;
-    if (psa_crypto_init() != PSA_SUCCESS) goto finish;
     update(SESSION_BUSY, L"Preparing the PC certificate…");
     failure = L"Cannot load the PC key. Check the user profile and other running copies of ConnectXP.";
     if (!credentials_load(&credentials)) goto finish;
     update(SESSION_BUSY, L"Connecting to the phone…");
     failure = L"Cannot reach the phone over TCP. Refresh discovery on the phone and retry.";
-    if (!transport_connect(&connection, target.address, target.identity.port)) goto finish;
-    packet = identity_packet(&credentials);
-    if (!packet || !transport_json(&connection, packet, FALSE)) goto finish;
-    cJSON_Delete(packet);
-    packet = NULL;
+    if (incomingSocket != INVALID_SOCKET) {
+        connection.socket = incomingSocket;
+        incomingSocket = INVALID_SOCKET;
+    } else {
+        if (!transport_connect(&connection, target.address, target.identity.port)) goto finish;
+        packet = session_identity_packet(credentials.id, network_service_port());
+        if (!packet || !transport_json(&connection, packet, FALSE)) goto finish;
+        cJSON_Delete(packet);
+        packet = NULL;
+    }
     update(SESSION_BUSY, L"TLS 1.2 — checking the phone certificate…");
     failure = L"TLS or certificate error. Check the date on both devices.";
-    tlsError = transport_tls(&connection, &credentials, target.identity.id, MBEDTLS_SSL_IS_SERVER, FALSE);
+    tlsError = transport_tls(&connection, &credentials, target.identity.id,
+        requirePin == 2 ? MBEDTLS_SSL_IS_CLIENT : MBEDTLS_SSL_IS_SERVER, FALSE);
     if (tlsError) goto finish;
     peerCertificate = mbedtls_ssl_get_peer_cert(&connection.ssl);
     failure = L"The phone certificate changed or its saved certificate is unreadable. Pairing stopped.";
     pinned = credentials_pin(&credentials, target.identity.id, peerCertificate, FALSE);
-    if (pinned < 0) goto finish;
+    if (pinned < 0 || (requirePin && !pinned)) goto finish;
     if (pinned) {
         phase = SESSION_PAIRED;
         update(phase, L"Paired. TLS connection established.");
@@ -240,6 +278,10 @@ static unsigned __stdcall run_session(void *argument)
             cJSON_Delete(request);
             if (!sent) goto finish;
             batteryRequested = TRUE;
+            request = media_player_list();
+            sent = request && transport_json(&connection, request, TRUE);
+            cJSON_Delete(request);
+            if (!sent) goto finish;
         }
         if (!used && phase == SESSION_PAIRED && !process_commands(&connection, &credentials)) goto finish;
         if (phase == SESSION_WAIT_PHONE && (DWORD)(GetTickCount() - deadline) > 30000) {
@@ -300,6 +342,24 @@ static unsigned __stdcall run_session(void *argument)
             int sharing = share_info(received, &offer);
             int charge, charging;
             ClipboardMessage clipboard;
+            if (media_request(received)) {
+                static const WORD keys[] = {0, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_STOP, VK_MEDIA_NEXT_TRACK, VK_MEDIA_PREV_TRACK};
+                int command = media_command(received);
+                const cJSON *body = cJSON_GetObjectItemCaseSensitive(received, "body");
+                const cJSON *list = cJSON_GetObjectItemCaseSensitive(body, "requestPlayerList");
+                cJSON *reply;
+                if (command > MEDIA_NONE && command <= MEDIA_PREVIOUS) {
+                    INPUT input[2];
+                    ZeroMemory(input, sizeof(input));
+                    input[0].type = input[1].type = INPUT_KEYBOARD;
+                    input[0].ki.wVk = input[1].ki.wVk = keys[command];
+                    input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+                    SendInput(2, input, sizeof(INPUT));
+                }
+                reply = cJSON_IsTrue(list) ? media_player_list() : media_player_info();
+                if (reply) transport_json(&connection, reply, TRUE);
+                cJSON_Delete(reply);
+            }
             if (plugin_battery(received, &charge, &charging)) {
                 EnterCriticalSection(&guard);
                 status.batteryCharge = charge;
@@ -354,7 +414,11 @@ static unsigned __stdcall run_session(void *argument)
     }
 finish:
     EnterCriticalSection(&guard);
-    if (status.transferActive) lstrcpyW(status.transferText, L"Transfer interrupted.");
+    if (status.transferActive) {
+        LeaveCriticalSection(&guard);
+        transfer_finished(L"Transfer interrupted.", NULL);
+        EnterCriticalSection(&guard);
+    }
     status.transferActive = FALSE;
     notifications.alertCount = 0;
     pendingPath[0] = 0;
@@ -369,6 +433,7 @@ finish:
     LeaveCriticalSection(&guard);
     cJSON_Delete(packet);
     transport_close(&connection);
+    if (incomingSocket != INVALID_SOCKET) { closesocket(incomingSocket); incomingSocket = INVALID_SOCKET; }
     WSACleanup();
 no_winsock:
     credentials_free(&credentials);
@@ -383,13 +448,16 @@ no_winsock:
     return 0;
 }
 
-void session_init(void)
+int session_init(void)
 {
+    /* Initialize the process-wide PSA state before starting either worker. */
+    if (psa_crypto_init() != PSA_SUCCESS) return 0;
     InitializeCriticalSection(&guard);
     status.batteryCharge = -1;
     cancelEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     confirmEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     transferCancel = CreateEventW(NULL, TRUE, FALSE, NULL);
+    return 1;
 }
 
 void session_status(SessionStatus *snapshot)
@@ -414,20 +482,19 @@ void session_stop(void)
     worker = NULL;
 }
 
-int session_start(const DiscoveryPeer *peer)
+static int start_session(const DiscoveryPeer *peer, SOCKET socket, int pin)
 {
-    if (!cancelEvent || !confirmEvent || !transferCancel || peer->identity.version != 7) return 0;
+    if (!cancelEvent || !confirmEvent || !transferCancel || peer->identity.version != 7) {
+        if (socket != INVALID_SOCKET) closesocket(socket);
+        return 0;
+    }
     session_stop();
+    incomingSocket = socket;
+    requirePin = pin;
     ResetEvent(cancelEvent);
     ResetEvent(confirmEvent);
     accepted = FALSE;
     target = *peer;
-    {
-        WCHAR name[DEVICE_NAME_MAX + 1];
-        device_name_load(name);
-        if (!WideCharToMultiByte(CP_UTF8, 0, name, -1, localDeviceName, sizeof(localDeviceName), NULL, NULL))
-            strcpy(localDeviceName, "ConnectXP");
-    }
     EnterCriticalSection(&guard);
     notification_store_clear(&notifications);
     ZeroMemory(&status, sizeof(status));
@@ -442,8 +509,13 @@ int session_start(const DiscoveryPeer *peer)
     LeaveCriticalSection(&guard);
     worker = (HANDLE)_beginthreadex(NULL, 0, run_session, NULL, 0, NULL);
     if (!worker) update(SESSION_ERROR, L"Could not start the network worker.");
+    if (!worker && incomingSocket != INVALID_SOCKET) { closesocket(incomingSocket); incomingSocket = INVALID_SOCKET; }
     return worker != NULL;
 }
+
+int session_start(const DiscoveryPeer *peer) { return start_session(peer, INVALID_SOCKET, 0); }
+int session_start_saved(const DiscoveryPeer *peer) { return start_session(peer, INVALID_SOCKET, 1); }
+int session_accept(const DiscoveryPeer *peer, SOCKET socket) { return start_session(peer, socket, 2); }
 
 void session_free(void)
 {
@@ -491,6 +563,14 @@ int session_send_file(const WCHAR *path)
         lstrcpyW(pendingPath, path);
         status.transferActive = TRUE;
         status.transferPercent = 0;
+        status.transferReceiving = FALSE;
+        status.transferStarted = GetTickCount();
+        status.transferName[0] = 0;
+        {
+            const WCHAR *name = wcsrchr(path, L'\\');
+            lstrcpynW(status.transferName, name ? name + 1 : path, ARRAYSIZE(status.transferName));
+        }
+        status.transferDone = status.transferTotal = 0;
         lstrcpyW(status.transferText, L"Preparing to send the file…");
         ResetEvent(transferCancel);
     }
@@ -586,4 +666,18 @@ int session_ping(void)
     if (ready) ++pingsPending;
     LeaveCriticalSection(&guard);
     return ready;
+}
+
+int session_transfer_record(TransferRecord *record)
+{
+    int found;
+    EnterCriticalSection(&guard);
+    found = completedCount != 0;
+    if (found) {
+        *record = completed[0];
+        --completedCount;
+        memmove(completed, completed + 1, completedCount * sizeof(completed[0]));
+    }
+    LeaveCriticalSection(&guard);
+    return found;
 }

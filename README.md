@@ -2,13 +2,58 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.10.2 has English and Russian interfaces, a custom application icon, native Windows shell action icons, a compact
-660×360 window, tray support, and an About dialog using `ShellAboutW`.
-The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
-The application icon was supplied by Daniel Myslivets. Its original DIB frames
-are embedded for Windows XP compatibility. The About dialog credits the idea author.
-The status text and pairing button occupy separate rows to prevent overlapping
-background erasure on XP. Polling updates labels only when their text changes.
+Version 0.11.0 introduces an Explorer-style task pane, compact themed action buttons,
+a resizable and maximizable main window (880×560 initially, minimum 800×520),
+and a separate IE6-inspired file transfer window. English and Russian interfaces
+are available. Buttons and task groups use the installed Windows theme, with
+system-color fallbacks for classic Windows and unavailable theme resources.
+Theme and system-color changes are applied while the program is running.
+
+The application icon was supplied by Daniel Myslivets and is retained in the
+executable, window title bars, About dialog and primary tray icon. Action and
+phone icons come from the installed Windows shell and telephony DLLs, with
+embedded fallback icons. No Windows DLLs are distributed. The About dialog uses
+`ShellAboutW`. Background painting excludes child controls, and unchanged labels
+are not rewritten during polling.
+
+## Connection and startup options
+
+**Options → Connect automatically** is enabled by default. ConnectXP tries saved
+protocol 7 devices every 15 seconds, rotating through remembered endpoints.
+Discovery refreshes addresses after a network change. Automatic reconnect requires
+an existing certificate pin and never silently pairs a new device or accepts a
+changed certificate. One phone connection is active at a time. **Device → Disconnect**
+pauses reconnect and incoming sessions until a manual pairing/connect action or
+re-enabling automatic connection. Forgetting a pairing also pauses reconnect.
+
+A background listener selects TCP 1716–1738 and advertises the PC on IPv4 UDP
+1716 every 30 seconds. Incoming connections from already paired phones use TLS
+in the client role and verify the same saved certificate pin. New phones must
+first be paired using the PC's Pair / connect action. Allow the listener through
+the Windows firewall for phone-initiated connections. Protocol 8 pairing remains
+unsupported. Broadcast announcements use the system's default IPv4 route.
+
+**Options → Start with Windows** adds a quoted path to this EXE with `--tray` to
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` under `ConnectXP`.
+Disabling it removes that value. **Options → Start in tray** controls ordinary
+launches. `--tray` always requests a hidden launch; if the tray icon cannot be
+created, the main window opens. Double-click the tray icon to restore the window.
+Startup and reconnect preferences are per user under `HKCU\Software\Connect95`.
+A session-local mutex prevents a second instance from using the same profile.
+
+## Battery tray and multimedia remote
+
+The primary tray icon remains the custom ConnectXP artwork. A second generated
+battery icon shows charge and charging state in its tooltip while connected.
+A low-battery balloon appears at 15% or below when unplugged; charging or a rise
+above 20% resets the warning. These colors follow system colors.
+
+Enable the multimedia remote in KDE Connect on the phone and select
+**Windows media keys**. Play/pause, stop, next and previous send standard Windows
+media-key press/release events using `SendInput`, only on an authenticated paired
+connection. The target player must support those keys. Play and Pause requests
+both use the generic play/pause key. This fallback cannot read track metadata,
+seek, control per-player volume, or report actual playback state.
 
 ## Interface language
 
@@ -26,9 +71,8 @@ Phone notification content is displayed as received.
 4. Accept the request on the phone, compare the eight-character code, and confirm the match on the PC.
 
 Discovery listens on IPv4 UDP 1716 and accepts protocol 7 and 8 announcements.
-TLS connections and pairing currently support **protocol 7**. ConnectXP initiates
-one control connection from the PC. Incoming control connections, active discovery
-announcements, protocol 8 pairing, and automatic reconnect are pending.
+TLS connections and pairing support **protocol 7**, with outgoing connections and
+trusted incoming connections. The listener advertises protocol 7. Protocol 8 pairing is pending.
 
 The phone certificate is pinned after confirmation. A changed certificate stops
 reconnection. **Device → Disconnect** preserves trust. **Device → Forget pairing
@@ -71,7 +115,24 @@ Unreadable metadata falls back to the ID-based name and waits for discovery.
 
 ## Files and find phone
 
-After connecting, **Send file** opens the native Windows file picker.
+After connecting, **Send file** opens the native Windows file picker with multiple
+selection. Files may also be dropped onto the main window. Up to 64 pending files
+are queued sequentially for the currently connected phone. Folders are rejected.
+A lost session clears unsent queued files, preventing accidental sending to a
+different device. Cancelling a batch clears its pending files and cancels the
+current transfer. Filenames and full paths must fit XP's 259-character path limit.
+
+The modeless transfer window shows the current filename, a segmented progress
+bar, transferred/total size, average speed, estimated time remaining and queue
+length. Unknown-size streams have no total or remaining-time estimate. Closing
+the window hides it while transfer continues; Cancel stops the transfer.
+On systems providing the shell AVI copy resource, the window plays that system
+animation during transfer. No animation asset is distributed.
+**File → Transfer history** reopens the window. The newest 64 results (received
+and sent, timestamp, filename and outcome) are saved in
+`%APPDATA%\Connect95\transfers.json` and restored at startup. **Open folder**
+opens the received-files directory without opening a received file.
+
 **Find phone** sends `kdeconnect.findmyphone.request` to the paired phone.
 The phone's KDE Connect plugins must be enabled for these features.
 
@@ -91,7 +152,8 @@ Files are processed sequentially. A find-phone request made during a transfer is
 queued until that transfer completes. For reliable transfers, start one direction
 at a time. Battery reporting and text clipboard actions are available after connecting.
 
-Allow incoming UDP 1716 for discovery and incoming TCP 1739–1764 for sending
+Allow incoming UDP 1716 for discovery, TCP 1716–1738 for trusted incoming
+control connections, and TCP 1739–1764 for sending
 files from the PC. File downloads connect to the paired phone's announced port.
 Restrict the application firewall exception to the local network.
 
@@ -166,7 +228,8 @@ The main status bar shows the local arrival time of the latest phone clipboard
 packet, helping distinguish fresh text from an older cached clipboard. Use the
 phone's explicit **Send clipboard** action when Android blocks background access.
 
-Maximize commands are disabled in both the main and Notifications windows.
+The main window supports maximizing and restoring. The separate Notifications
+window and the file-transfer window retain their compact size.
 
 ## Windows XP support
 
@@ -175,7 +238,7 @@ CryptoAPI (`CryptGenRandom`), and the local private key is protected using
 user-scoped DPAPI (`CryptProtectData`). System TLS updates are unnecessary for
 this application. The system date must be correct for certificate validation.
 
-The identity is generated on first connection and stored in
+The identity is generated at startup and stored in
 `%APPDATA%\Connect95\identity.dat`. Phone certificates use `peer-<deviceId>.der`
 in the same directory. The established Connect95 profile and registry namespace
 provide upgrade compatibility for ConnectXP. DPAPI binds the identity to its Windows user profile.
@@ -183,8 +246,10 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.10.2 file transfer, ringing, dialogs, and filesystem handling still need
-validation with a real Windows/Android pair. Automated TLS tests use an in-memory
+Version 0.11.0 incoming/reconnect behavior, startup, themes, maximized layout,
+transfer queue/history, battery tray and multimedia keys still need validation
+with a real Windows XP/Android pair. Previous file transfer and pairing were
+reported working by the user. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
 ## Build
@@ -233,7 +298,7 @@ transfer, finding the phone, battery/charging updates, clipboard actions in both
 automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
 the About dialog, saved-device persistence across restart, offline selection,
 group migration after pairing/forgetting, Ctrl+Shift+V clipboard import, notification updates/cancellations, silent initial
-sync, balloon clicks, disabled maximize commands, custom names including Cyrillic text, restart
+sync, balloon clicks, maximizing and restoring the main window, custom names including Cyrillic text, restart
 persistence, renaming during a file transfer, ping sending from the Device menu, and repeated
 incoming pings including Unicode messages.
 
@@ -243,3 +308,10 @@ The protocol was checked against KDE Connect sources at commit
 
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
+
+The 0.11.0 manual pass should also cover phone-initiated TLS reconnect with the
+original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
+quoted startup paths containing spaces, Explorer restarts with both tray icons,
+multiple-selection and dropped-file batches, cancelling with queued files,
+history after restart, classic/Luna theme switching while open, and media keys
+with a compatible player. These are a checklist, not claimed completed tests.

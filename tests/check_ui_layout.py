@@ -9,10 +9,10 @@ def check_layout(source):
         "static void drawButton", 1
     )[0]
     pane_width = int(re.search(r"#define DEVICE_PANE_WIDTH (\d+)", source)[1])
-    # Include client sizes below the outer 640x360 minimum for window borders,
+    # Include client sizes below the outer 800x520 minimum for window borders,
     # caption, menu and status bar, as well as larger manually resized windows.
-    for width in (600, 620, 640, 660, 800, 1024, 1920):
-        for height in (280, 300, 480, 900):
+    for width in (760, 780, 800, 880, 1024, 1920):
+        for height in (440, 460, 480, 700, 1000):
             values = {"width": width, "height": height, "DEVICE_PANE_WIDTH": pane_width}
             # Read the real layout calculations so this checks the implementation.
             for name, expression in re.findall(
@@ -32,7 +32,7 @@ def check_layout(source):
                     name, width, height, "outside client area"
                 )
                 # A group box intentionally encloses sibling text and progress.
-                if name != "transferBox":
+                if name not in ("transferBox", "recentBox"):
                     rectangles[name] = (x, y, x + w, y + h)
             assert {"state", "battery", "pairButton"} <= rectangles.keys()
             for (a, first), (b, second) in combinations(rectangles.items(), 2):

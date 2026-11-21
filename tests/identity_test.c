@@ -23,6 +23,17 @@ int main(void)
     assert(result.port == 1716 && result.version == 8);
     assert(!strcmp(result.name, "Phone \xe2\x98\x83"));
     original = result;
+    {
+        const char *connection = "{\"type\":\"kdeconnect.identity\",\"body\":{\"deviceId\":\"1234567890abcdef1234567890abcdef\",\"deviceName\":\"Phone\",\"protocolVersion\":7}}\n";
+        const char *targeted = "{\"type\":\"kdeconnect.identity\",\"body\":{\"deviceId\":\"1234567890abcdef1234567890abcdef\",\"deviceName\":\"Phone\",\"protocolVersion\":7,\"targetDeviceId\":\"abcdef1234567890abcdef1234567890ab\",\"targetProtocolVersion\":7}}\n";
+        DiscoveryIdentity tcp;
+        assert(!identity_parse(connection, strlen(connection), &tcp));
+        assert(identity_connection_parse(connection, strlen(connection), &tcp, "abcdef1234567890abcdef1234567890ab"));
+        assert(tcp.port == 0 && tcp.version == 7);
+        assert(identity_connection_parse(targeted, strlen(targeted), &tcp, "abcdef1234567890abcdef1234567890ab"));
+        assert(!identity_connection_parse(targeted, strlen(targeted), &tcp, "00000000000000000000000000000000"));
+        assert(!identity_connection_parse(targeted, strlen(targeted), &tcp, NULL));
+    }
     /* Truncated input never leaks partially parsed fields to the caller. */
     for (i = 0; i < length - 2; ++i) {
         assert(!identity_parse(valid, i, &result));

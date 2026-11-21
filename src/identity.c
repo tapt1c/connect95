@@ -35,7 +35,7 @@ static int copy_text(const cJSON *item, char *target, size_t capacity)
     return 1;
 }
 
-int identity_parse(const char *data, size_t size, DiscoveryIdentity *identity)
+static int parse_identity(const char *data, size_t size, DiscoveryIdentity *identity, const char *localId)
 {
     cJSON *root;
     const cJSON *body, *type, *port, *version, *name;
@@ -69,12 +69,18 @@ int identity_parse(const char *data, size_t size, DiscoveryIdentity *identity)
     }
     port = field(body, "tcpPort");
     version = field(body, "protocolVersion");
-    if (!cJSON_IsNumber(port) || port->valuedouble < 1716 || port->valuedouble > 1764 ||
-        port->valuedouble != port->valueint) goto done;
+    if ((!port && !localId) || (port && (!cJSON_IsNumber(port) || port->valuedouble < 1716 || port->valuedouble > 1764 ||
+        port->valuedouble != port->valueint))) goto done;
     if (!cJSON_IsNumber(version) || version->valuedouble < 7 || version->valuedouble > 8 ||
         version->valuedouble != version->valueint) goto done;
-    parsed.port = (unsigned short)port->valueint;
+    parsed.port = port ? (unsigned short)port->valueint : 0;
     parsed.version = version->valueint;
+    if (localId) {
+        const cJSON *target = field(body, "targetDeviceId");
+        const cJSON *protocol = field(body, "targetProtocolVersion");
+        if (parsed.version != 7 || (target && (!cJSON_IsString(target) || strcmp(target->valuestring, localId))) ||
+            (protocol && (!cJSON_IsNumber(protocol) || protocol->valuedouble != 7))) goto done;
+    }
     name = field(body, "deviceName");
     if (name && !copy_text(name, parsed.name, sizeof(parsed.name))) goto done;
     for (i = 0; parsed.name[i]; ++i)
@@ -84,4 +90,14 @@ int identity_parse(const char *data, size_t size, DiscoveryIdentity *identity)
 done:
     cJSON_Delete(root);
     return valid;
+}
+
+int identity_parse(const char *data, size_t size, DiscoveryIdentity *identity)
+{
+    return parse_identity(data, size, identity, NULL);
+}
+
+int identity_connection_parse(const char *data, size_t size, DiscoveryIdentity *identity, const char *localId)
+{
+    return localId && parse_identity(data, size, identity, localId);
 }

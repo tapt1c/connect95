@@ -119,7 +119,7 @@ finish:
     return error;
 }
 
-static int receive_directory(WCHAR *directory)
+int transfer_directory(WCHAR *directory)
 {
     if (SHGetFolderPathW(NULL, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL, 0, directory) != S_OK ||
         lstrlenW(directory) + 10 >= MAX_PATH) return 0;
@@ -175,7 +175,7 @@ const WCHAR *transfer_receive(TransferContext *context, const ShareInfo *offer)
     transport_init(&payload, context->control->cancel);
     payload.transferCancel = context->cancel;
     if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, offer->filename, -1, filename, ARRAYSIZE(filename)) ||
-        !receive_directory(directory) || lstrlenW(directory) + lstrlenW(filename) + 16 >= MAX_PATH) goto finish;
+        !transfer_directory(directory) || lstrlenW(directory) + lstrlenW(filename) + 16 >= MAX_PATH) goto finish;
     file = temporary_file(context, directory, temporary);
     if (file == INVALID_HANDLE_VALUE) goto finish;
     context->progress(filename, 0, offer->unknownSize ? UINT64_MAX : offer->size);

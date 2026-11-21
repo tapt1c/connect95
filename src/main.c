@@ -1,5 +1,9 @@
 #include "discovery.h"
 #include "language.h"
+#include "network_service.h"
+#include "file_jobs.h"
+#include "settings.h"
+#include "theme.h"
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
@@ -32,13 +36,22 @@
 #define ID_PING 232
 #define ID_LANGUAGE_ENGLISH 240
 #define ID_LANGUAGE_RUSSIAN 241
+#define ID_OPEN_FOLDER 250
+#define ID_HISTORY 251
+#define ID_AUTOCONNECT 252
+#define ID_AUTOSTART 253
+#define ID_START_TRAY 254
+#define WM_INCOMING (WM_APP + 4)
+#define ID_SIDE_SEND 260
+#define ID_SIDE_RING 261
+#define ID_SIDE_CLIPBOARD 262
 #define MAX_PEERS 64
-#define DEVICE_PANE_WIDTH 175
+#define DEVICE_PANE_WIDTH 220
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton, pairButton;
 static HWND clipboardButton, transferBox, transferText, progress, statusBar, cancelTransferButton;
-static HFONT normalFont, titleFont;
+static HFONT normalFont, titleFont, groupFont;
 static HICON icons[4];
 static NOTIFYICONDATAW tray;
 static BOOL trayAdded, balloonBusy;
@@ -52,6 +65,15 @@ static int peerCount;
 static HTREEITEM savedGroup, discoveredGroup, peerNodes[MAX_PEERS];
 static BOOL peerSaved[MAX_PEERS], peerSeen[MAX_PEERS], peerConnected[MAX_PEERS];
 static HIMAGELIST deviceImages;
+static HWND sideSend, sideFolder, sideHistory, sideRing, sideNotifications, sideClipboard;
+static HWND recentBox, recentText;
+static BOOL autoPaused, startInTray, batteryAdded, lowBatteryWarned;
+static DWORD lastAutoAttempt;
+static int autoCursor;
+static HICON batteryIcon, phonePortrait;
+static unsigned int batteryGeneration;
+static int previousBattery = -2, previousCharging = -1;
+
 
 /* The session is polled every 500 ms. Updating unchanged STATIC text erases
    its background and needlessly repaints nearby themed controls on XP. */
@@ -159,7 +181,10 @@ static void showPeer(void)
     session_status(&session);
     paired = selected >= 0 && selected < peerCount && session.phase == SESSION_PAIRED &&
              !strcmp(session.deviceId, peers[selected].identity.id);
-    EnableWindow(sendButton, paired && !session.transferActive);
+    EnableWindow(sendButton, paired);
+    EnableWindow(sideSend, paired);
+    EnableWindow(sideRing, paired);
+    EnableWindow(sideClipboard, paired);
     EnableWindow(ringButton, paired);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_PING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     EnableWindow(clipboardButton, paired);
@@ -174,7 +199,7 @@ static void showPeer(void)
         setControlText(battery, description);
     } else setControlText(battery, tr(L"Battery —"));
     EnableWindow(cancelTransferButton, paired && session.transferActive);
-    EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND, MF_BYCOMMAND | (paired && !session.transferActive ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(GetMenu(GetParent(devices)), ID_RING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     if (selected < 0 || selected >= peerCount) {
         EnableWindow(pairButton, FALSE);
@@ -249,19 +274,7 @@ static BOOL pairedSelection(void)
 
 static void sendFile(HWND window)
 {
-    OPENFILENAMEW dialog;
-    WCHAR path[MAX_PATH] = L"";
-    if (!pairedSelection()) return;
-    ZeroMemory(&dialog, sizeof(dialog));
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = window;
-    dialog.lpstrFilter = tr(L"All files\0*.*\0\0");
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = ARRAYSIZE(path);
-    dialog.lpstrTitle = tr(L"Send file to phone");
-    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
-    if (GetOpenFileNameW(&dialog) && pairedSelection() && !session_send_file(path))
-        MessageBoxW(window, tr(L"A transfer is already in progress or the connection has closed."), L"ConnectXP", MB_OK | MB_ICONINFORMATION);
+    if (pairedSelection()) jobs_select(window);
     showPeer();
 }
 
@@ -369,7 +382,7 @@ static void pollNotifications(HWND window, const SessionStatus *snapshot)
     notification = HeapAlloc(GetProcessHeap(), 0, sizeof(*notification));
     if (!notification) return;
     if (balloonBusy) {
-        if (!session_notification_get(balloonId, notification) || (DWORD)(GetTickCount() - balloonStarted) > 40000)
+        if ((balloonId[0] && !session_notification_get(balloonId, notification)) || (DWORD)(GetTickCount() - balloonStarted) > 40000)
             hideBalloon(window);
         HeapFree(GetProcessHeap(), 0, notification);
         return;
@@ -392,13 +405,122 @@ static void pollNotifications(HWND window, const SessionStatus *snapshot)
     HeapFree(GetProcessHeap(), 0, notification);
 }
 
+static void autoConnect(const SessionStatus *snapshot)
+{
+    int attempt;
+    if (autoPaused || !settings_get(L"AutoConnect", TRUE) || !peerCount ||
+        (snapshot->phase != SESSION_IDLE && snapshot->phase != SESSION_ERROR && snapshot->phase != SESSION_CLOSED) ||
+        (DWORD)(GetTickCount() - lastAutoAttempt) < 15000) return;
+    lastAutoAttempt = GetTickCount();
+    for (attempt = 0; attempt < peerCount; ++attempt) {
+        int index = autoCursor++ % peerCount;
+        if (!peerSaved[index] || !peers[index].address[0] || peers[index].identity.version != 7 ||
+            saved_device_exists(peers[index].identity.id) != 1) continue;
+        if (session_start_saved(&peers[index])) TreeView_SelectItem(devices, peerNodes[index]);
+        break;
+    }
+}
+
+static HICON makeBatteryIcon(int charge, BOOL charging)
+{
+    HDC screen = GetDC(NULL), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, 16, 16);
+    BYTE opaque[64] = {0};
+    HBITMAP mask = CreateBitmap(16, 16, 1, 1, opaque);
+    HGDIOBJ previous = SelectObject(dc, bitmap);
+    RECT box = {1, 4, 14, 13}, terminal = {14, 7, 16, 10}, fill = {3, 6, 3 + charge * 9 / 100, 11};
+    ICONINFO info;
+    HICON icon;
+    HDC maskDc = CreateCompatibleDC(screen);
+    HGDIOBJ previousMask = SelectObject(maskDc, mask);
+    FillRect(maskDc, &(RECT){0, 0, 16, 16}, (HBRUSH)GetStockObject(WHITE_BRUSH));
+    FillRect(maskDc, &box, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    FillRect(maskDc, &terminal, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    FillRect(dc, &(RECT){0, 0, 16, 16}, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    FillRect(dc, &box, GetSysColorBrush(COLOR_WINDOW));
+    FrameRect(dc, &box, GetSysColorBrush(COLOR_BTNTEXT));
+    FillRect(dc, &terminal, GetSysColorBrush(COLOR_BTNTEXT));
+    {
+        HBRUSH brush = CreateSolidBrush(GetSysColor(charging ? COLOR_HIGHLIGHT : charge <= 15 ? COLOR_HOTLIGHT : COLOR_ACTIVECAPTION));
+        FillRect(dc, &fill, brush);
+        DeleteObject(brush);
+    }
+    if (charging) {
+        SetTextColor(dc, GetSysColor(COLOR_BTNTEXT)); SetBkMode(dc, TRANSPARENT);
+        TextOutW(dc, 5, 0, L"+", 1);
+        SetBkMode(maskDc, TRANSPARENT); SetTextColor(maskDc, RGB(0, 0, 0));
+        TextOutW(maskDc, 5, 0, L"+", 1);
+    }
+    SelectObject(dc, previous);
+    ZeroMemory(&info, sizeof(info));
+    info.fIcon = TRUE; info.hbmColor = bitmap; info.hbmMask = mask;
+    icon = CreateIconIndirect(&info);
+    SelectObject(maskDc, previousMask); DeleteDC(maskDc);
+    DeleteObject(bitmap); DeleteObject(mask); DeleteDC(dc); ReleaseDC(NULL, screen);
+    return icon;
+}
+
+static void pollBattery(HWND window, const SessionStatus *snapshot)
+{
+    NOTIFYICONDATAW item;
+    BOOL connected = snapshot->phase == SESSION_PAIRED && snapshot->batteryCharge >= 0;
+    if (snapshot->generation != batteryGeneration) {
+        lowBatteryWarned = FALSE; batteryGeneration = snapshot->generation;
+    }
+    if (!connected) {
+        if (batteryAdded) { item = tray; item.uID = 2; Shell_NotifyIconW(NIM_DELETE, &item); }
+        batteryAdded = FALSE; previousBattery = -2;
+        return;
+    }
+    if (previousBattery != snapshot->batteryCharge || previousCharging != snapshot->batteryCharging || !batteryAdded) {
+        HICON next = makeBatteryIcon(snapshot->batteryCharge, snapshot->batteryCharging);
+        ZeroMemory(&item, sizeof(item)); item.cbSize = NOTIFYICONDATAW_V2_SIZE;
+        item.hWnd = window; item.uID = 2; item.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+        item.uCallbackMessage = WM_TRAY; item.hIcon = next;
+        wsprintfW(item.szTip, tr(L"Phone battery: %d%%%s"), snapshot->batteryCharge, snapshot->batteryCharging ? tr(L" (charging)") : L"");
+        if (next && Shell_NotifyIconW(batteryAdded ? NIM_MODIFY : NIM_ADD, &item)) {
+            if (batteryIcon) DestroyIcon(batteryIcon);
+            batteryIcon = next; batteryAdded = TRUE;
+            previousBattery = snapshot->batteryCharge; previousCharging = snapshot->batteryCharging;
+        } else if (next) DestroyIcon(next);
+    }
+    if (snapshot->batteryCharging || snapshot->batteryCharge > 20) lowBatteryWarned = FALSE;
+    if (!lowBatteryWarned && !snapshot->batteryCharging && snapshot->batteryCharge <= 15 && !balloonBusy && trayAdded) {
+        item = tray; item.uFlags = NIF_INFO; item.dwInfoFlags = NIIF_WARNING; item.uTimeout = 10000;
+        lstrcpynW(item.szInfoTitle, tr(L"Phone battery is low"), ARRAYSIZE(item.szInfoTitle));
+        wsprintfW(item.szInfo, tr(L"Phone battery: %d%%%s"), snapshot->batteryCharge, L"");
+        if (Shell_NotifyIconW(NIM_MODIFY, &item)) {
+            lowBatteryWarned = TRUE; balloonBusy = TRUE; balloonStarted = GetTickCount(); balloonId[0] = 0;
+        }
+    }
+}
+
+static void recentNotifications(void)
+{
+    NotificationSummary rows[2];
+    WCHAR text[768] = L"", app[97], title[257];
+    unsigned int revision;
+    int count = session_notification_list(rows, 2, &revision), i;
+    for (i = 0; i < count; ++i) {
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, rows[i].app, -1, app, ARRAYSIZE(app))) lstrcpyW(app, L"KDE Connect");
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, rows[i].title, -1, title, ARRAYSIZE(title))) title[0] = 0;
+        if (i) lstrcatW(text, L"\r\n\r\n");
+        lstrcatW(text, app); lstrcatW(text, L" — "); lstrcatW(text, title);
+    }
+    setControlText(recentText, count ? text : tr(L"No notifications yet"));
+}
+
 static void pollSession(HWND window)
 {
     static BOOL confirmationShown;
     SessionStatus snapshot;
     WCHAR question[512];
     session_status(&snapshot);
+    pollBattery(window, &snapshot);
     pollNotifications(window, &snapshot);
+    jobs_tick(window, normalFont, &snapshot);
+    recentNotifications();
+    autoConnect(&snapshot);
     if (reconnectForName && snapshot.phase == SESSION_PAIRED && !snapshot.transferActive) {
         int i;
         reconnectForName = FALSE;
@@ -448,7 +570,7 @@ static void receiveDiscovery(void)
             if (result < 0) setStatusText(tr(L"UDP receive error. Restart discovery from the Device menu."));
             break;
         }
-        if (result != 1) continue;
+        if (result != 1 || network_service_is_self(peer.identity.id)) continue;
         for (index = 0; index < peerCount; ++index)
             if (!strcmp(peers[index].identity.id, peer.identity.id)) break;
         if (index == MAX_PEERS) continue;
@@ -470,18 +592,19 @@ static void receiveDiscovery(void)
 
 /* XP shell32 icon indexes: computer, open folder, search, document.
  * Load from the running OS so XP supplies its own artwork. */
-static HICON loadSystemIcon(int shellIndex, int fallbackResource)
+static HICON loadSystemIcon(int shellIndex, int fallbackResource, int pixels)
 {
     WCHAR path[MAX_PATH];
     HICON icon = NULL;
     UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
     if (length && length + 13 < ARRAYSIZE(path)) {
         lstrcatW(path, L"\\shell32.dll");
-        ExtractIconExW(path, shellIndex, &icon, NULL, 1);
+        if (pixels <= 16) ExtractIconExW(path, shellIndex, NULL, &icon, 1);
+        else ExtractIconExW(path, shellIndex, &icon, NULL, 1);
     }
     if (!icon)
         icon = LoadImageW(instance, MAKEINTRESOURCEW(fallbackResource),
-                          IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+                          IMAGE_ICON, pixels, pixels, LR_DEFAULTCOLOR);
     return icon;
 }
 
@@ -504,7 +627,10 @@ static HMENU createMenu(void)
     HMENU help = CreatePopupMenu();
     HMENU view = CreatePopupMenu();
     HMENU language = CreatePopupMenu();
+    HMENU options = CreatePopupMenu();
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SEND, tr(L"Send file…"));
+    AppendMenuW(file, MF_STRING, ID_OPEN_FOLDER, tr(L"Open folder"));
+    AppendMenuW(file, MF_STRING, ID_HISTORY, tr(L"Transfer history"));
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
     AppendMenuW(file, MF_STRING, ID_EXIT, tr(L"Exit"));
     AppendMenuW(device, MF_STRING, ID_DISCOVERY, tr(L"Start discovery"));
@@ -525,11 +651,15 @@ static HMENU createMenu(void)
     CheckMenuRadioItem(language, ID_LANGUAGE_ENGLISH, ID_LANGUAGE_RUSSIAN,
                        ID_LANGUAGE_ENGLISH + language_current(), MF_BYCOMMAND);
     AppendMenuW(view, MF_POPUP, (UINT_PTR)language, tr(L"Language"));
+    AppendMenuW(options, MF_STRING | (settings_get(L"AutoConnect", TRUE) ? MF_CHECKED : 0), ID_AUTOCONNECT, tr(L"Connect automatically"));
+    AppendMenuW(options, MF_STRING | (settings_autostart() ? MF_CHECKED : 0), ID_AUTOSTART, tr(L"Start with Windows"));
+    AppendMenuW(options, MF_STRING | (settings_get(L"StartInTray", FALSE) ? MF_CHECKED : 0), ID_START_TRAY, tr(L"Start in tray"));
     AppendMenuW(help, MF_STRING, ID_ABOUT, tr(L"About…"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, tr(L"File"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)edit, tr(L"Edit"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)device, tr(L"Device"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)view, tr(L"View"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)options, tr(L"Options"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, tr(L"Help"));
     return menu;
 }
@@ -542,6 +672,13 @@ static void updateLanguage(HWND window)
     if (replacement && SetMenu(window, replacement)) DestroyMenu(previous);
     else if (replacement) DestroyMenu(replacement);
     DrawMenuBar(window);
+    setControlText(sideSend, tr(L"Send file…"));
+    setControlText(sideFolder, tr(L"Open folder"));
+    setControlText(sideHistory, tr(L"Transfer history"));
+    setControlText(sideRing, tr(L"Find phone"));
+    setControlText(sideNotifications, tr(L"Notifications…"));
+    setControlText(sideClipboard, tr(L"Clipboard"));
+    setControlText(recentBox, tr(L"Recent notifications"));
     setControlText(pairButton, tr(L"Pair / connect"));
     setControlText(sendButton, tr(L"Send file"));
     setControlText(ringButton, tr(L"Find phone"));
@@ -558,6 +695,7 @@ static void updateLanguage(HWND window)
     SendMessageW(devices, TVM_SETITEMW, 0, (LPARAM)&item);
     for (i = 0; i < peerCount; ++i) refreshPeerNode(i);
     notifications_ui_translate();
+    jobs_translate();
     showPeer();
     InvalidateRect(window, NULL, TRUE);
 }
@@ -613,69 +751,82 @@ static void layout(HWND window)
     rightX = left + 20;
     rightWidth = width - rightX - 10;
     buttonWidth = (rightWidth - 12) / 3;
-    buttonY = 104;
-    MoveWindow(devices, 8, 8, left, height - 16, TRUE);
-    MoveWindow(heading, rightX + 44, 12, rightWidth - 44, 25, TRUE);
+    buttonY = 140;
+    MoveWindow(devices, 14, 44, left - 28, height - 340, TRUE);
+    MoveWindow(heading, rightX + 56, 20, rightWidth - 56, 28, TRUE);
     /* Keep the two-line status above the battery and pairing row. STATIC
        background erasure can overwrite a sibling if these rectangles overlap. */
-    MoveWindow(state, rightX + 44, 43, rightWidth - 44, 30, TRUE);
-    MoveWindow(battery, rightX + 44, 78, rightWidth - 220, 21, TRUE);
-    MoveWindow(pairButton, rightX + rightWidth - 170, 74, 170, 25, TRUE);
-    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 72, TRUE);
-    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 72, TRUE);
+    MoveWindow(state, rightX + 56, 55, rightWidth - 56, 34, TRUE);
+    MoveWindow(battery, rightX + 56, 99, rightWidth - 250, 21, TRUE);
+    MoveWindow(pairButton, rightX + rightWidth - 180, 95, 180, 26, TRUE);
+    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 38, TRUE);
+    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 38, TRUE);
     MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
-               buttonY, rightWidth - (buttonWidth + 6) * 2, 72, TRUE);
-    MoveWindow(transferBox, rightX, 188, rightWidth, height - 196, TRUE);
-    MoveWindow(transferText, rightX + 12, 210, rightWidth - 100, 30, TRUE);
-    MoveWindow(cancelTransferButton, rightX + rightWidth - 76, 207, 64, 24, TRUE);
-    MoveWindow(progress, rightX + 12, 240, rightWidth - 24, 16, TRUE);
+               buttonY, rightWidth - (buttonWidth + 6) * 2, 38, TRUE);
+    MoveWindow(transferBox, rightX, 196, rightWidth, 128, TRUE);
+    MoveWindow(transferText, rightX + 12, 220, rightWidth - 110, 40, TRUE);
+    MoveWindow(cancelTransferButton, rightX + rightWidth - 88, 220, 76, 26, TRUE);
+    MoveWindow(progress, rightX + 12, 282, rightWidth - 24, 18, TRUE);
+    MoveWindow(sideSend, 20, height - 244, left - 40, 24, TRUE);
+    MoveWindow(sideFolder, 20, height - 216, left - 40, 24, TRUE);
+    MoveWindow(sideHistory, 20, height - 188, left - 40, 24, TRUE);
+    MoveWindow(sideRing, 20, height - 112, left - 40, 24, TRUE);
+    MoveWindow(sideNotifications, 20, height - 84, left - 40, 24, TRUE);
+    MoveWindow(sideClipboard, 20, height - 56, left - 40, 24, TRUE);
+    MoveWindow(recentBox, rightX, 340, rightWidth, height - 352, TRUE);
+    MoveWindow(recentText, rightX + 12, 364, rightWidth - 24, height - 388, TRUE);
     InvalidateRect(window, NULL, TRUE);
 }
 
 static void drawButton(const DRAWITEMSTRUCT *item)
 {
-    WCHAR label[64];
-    RECT rect = item->rcItem;
-    RECT textRect = rect;
-    UINT flags = DFCS_BUTTONPUSH;
+    WCHAR label[128];
+    RECT rect = item->rcItem, textRect = rect;
     int iconIndex = (int)item->CtlID - ID_SEND + 1;
-    int x = (rect.right - rect.left - 32) / 2;
     BOOL disabled = (item->itemState & ODS_DISABLED) != 0;
-    if (item->itemState & ODS_SELECTED) flags |= DFCS_PUSHED;
-    FillRect(item->hDC, &rect, GetSysColorBrush(COLOR_BTNFACE));
-    DrawFrameControl(item->hDC, &rect, DFC_BUTTON, flags);
-    DrawIconEx(item->hDC, x, 7, icons[iconIndex], 32, 32, 0, NULL, DI_NORMAL);
+    BOOL side = item->hwndItem == sideSend || item->hwndItem == sideFolder || item->hwndItem == sideHistory ||
+        item->hwndItem == sideRing || item->hwndItem == sideNotifications || item->hwndItem == sideClipboard;
+    HGDIOBJ previous;
+    if (side) {
+        if (item->hwndItem == sideSend || item->hwndItem == sideFolder) iconIndex = 1;
+        else if (item->hwndItem == sideRing) iconIndex = 2;
+        else iconIndex = 3;
+    }
+    if (side) theme_panel(item->hDC, &rect, FALSE);
+    else theme_button(item->hDC, &rect, (item->itemState & ODS_SELECTED) != 0, disabled, (item->itemState & ODS_FOCUS) != 0);
+    if (iconIndex >= 1 && iconIndex <= 3) DrawIconEx(item->hDC, 9, (rect.bottom - 16) / 2, icons[iconIndex], 16, 16, 0, NULL, DI_NORMAL);
     GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
     SetBkMode(item->hDC, TRANSPARENT);
-    SetTextColor(item->hDC, GetSysColor(disabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
-    SelectObject(item->hDC, normalFont);
-    textRect.top += 47;
-    textRect.left += 4;
+    SetTextColor(item->hDC, GetSysColor(disabled ? COLOR_GRAYTEXT : side ? COLOR_HOTLIGHT : COLOR_BTNTEXT));
+    previous = SelectObject(item->hDC, normalFont);
+    textRect.left += 30;
     textRect.right -= 4;
-    DrawTextW(item->hDC, label, -1, &textRect, DT_CENTER | DT_SINGLELINE);
+    DrawTextW(item->hDC, label, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item->hDC, previous);
     if (item->itemState & ODS_FOCUS) {
-        InflateRect(&rect, -5, -5);
+        InflateRect(&rect, -3, -3);
         DrawFocusRect(item->hDC, &rect);
     }
 }
 
-static HICON loadPhoneIcon(void)
+static HICON loadPhoneIcon(int pixels)
 {
     WCHAR path[MAX_PATH];
     HICON icon = NULL;
     UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
     if (length && length + 12 < ARRAYSIZE(path)) {
         lstrcatW(path, L"\\tapi32.dll");
-        ExtractIconExW(path, 0, NULL, &icon, 1);
+        if (pixels <= 16) ExtractIconExW(path, 0, NULL, &icon, 1);
+        else ExtractIconExW(path, 0, &icon, NULL, 1);
     }
-    if (!icon) icon = LoadImageW(instance, MAKEINTRESOURCEW(101), IMAGE_ICON, 16, 16, 0);
+    if (!icon) icon = LoadImageW(instance, MAKEINTRESOURCEW(101), IMAGE_ICON, pixels, pixels, 0);
     return icon;
 }
 
 static BOOL initializeDeviceTree(void)
 {
     TVINSERTSTRUCTW group;
-    HICON phone = loadPhoneIcon();
+    HICON phone = loadPhoneIcon(16);
     int i;
     deviceImages = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 1, 1);
     if (!deviceImages || !phone) {
@@ -716,6 +867,8 @@ static BOOL createControls(HWND window)
     if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         return FALSE;
     normalFont = CreateFontIndirectW(&metrics.lfMessageFont);
+    metrics.lfMessageFont.lfWeight = FW_BOLD;
+    groupFont = CreateFontIndirectW(&metrics.lfMessageFont);
     metrics.lfMessageFont.lfHeight = -18;
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     titleFont = CreateFontIndirectW(&metrics.lfMessageFont);
@@ -723,6 +876,14 @@ static BOOL createControls(HWND window)
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, window, NULL, instance, NULL);
     SendMessageW(devices, WM_SETFONT, (WPARAM)normalFont, TRUE);
+    sideSend = control(window, L"BUTTON", tr(L"Send file…"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_SEND);
+    sideFolder = control(window, L"BUTTON", tr(L"Open folder"), BS_OWNERDRAW | WS_TABSTOP, ID_OPEN_FOLDER);
+    sideHistory = control(window, L"BUTTON", tr(L"Transfer history"), BS_OWNERDRAW | WS_TABSTOP, ID_HISTORY);
+    sideRing = control(window, L"BUTTON", tr(L"Find phone"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_RING);
+    sideNotifications = control(window, L"BUTTON", tr(L"Notifications…"), BS_OWNERDRAW | WS_TABSTOP, ID_NOTIFICATIONS);
+    sideClipboard = control(window, L"BUTTON", tr(L"Clipboard"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_CLIPBOARD);
+    recentBox = control(window, L"BUTTON", tr(L"Recent notifications"), BS_GROUPBOX, 0);
+    recentText = control(window, L"STATIC", tr(L"No notifications yet"), SS_LEFT, 0);
     heading = control(window, L"STATIC", L"ConnectXP", SS_LEFT, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
     state = control(window, L"STATIC", tr(L"No connected devices"), SS_LEFT, 0);
@@ -738,7 +899,8 @@ static BOOL createControls(HWND window)
     statusBar = control(window, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0);
     setStatusText(tr(L"  Ready."));
     if (devices && !initializeDeviceTree()) return FALSE;
-    return normalFont && titleFont && devices && heading && state && battery &&
+    return normalFont && titleFont && groupFont && sideSend && sideFolder && sideHistory && sideRing &&
+        sideNotifications && sideClipboard && recentBox && recentText && devices && heading && state && battery &&
         pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
         cancelTransferButton && progress && statusBar;
 }
@@ -747,35 +909,85 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
 {
     if (taskbarCreated && message == taskbarCreated) {
         addTray(window);
+        batteryAdded = FALSE; previousBattery = -2;
         return 0;
     }
     switch (message) {
     case WM_CREATE:
         if (!createControls(window)) return -1;
-        DeleteMenu(GetSystemMenu(window, FALSE), SC_MAXIMIZE, MF_BYCOMMAND);
+        theme_refresh(window);
+        jobs_init();
+        DragAcceptFiles(window, TRUE);
+        network_service_start(window, WM_INCOMING);
+        lastAutoAttempt = GetTickCount() - 12000;
         addTray(window);
         startDiscovery(window);
         SetTimer(window, 1, 500, NULL);
         return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_MAXIMIZE) return 0;
-        break;
     case WM_SIZE:
-        if (wParam == SIZE_MAXIMIZED) { ShowWindow(window, SW_RESTORE); return 0; }
-        if (wParam == SIZE_MINIMIZED && trayAdded) ShowWindow(window, SW_HIDE);
+        if (wParam == SIZE_MINIMIZED) { if (trayAdded) ShowWindow(window, SW_HIDE); }
         else layout(window);
         return 0;
     case WM_GETMINMAXINFO:
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 640;
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 360;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 800;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 520;
         return 0;
     case WM_DRAWITEM:
         drawButton((const DRAWITEMSTRUCT *)lParam);
         return TRUE;
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        theme_refresh(window);
+        previousBattery = -2;
+        RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+        return 0;
+    case WM_DROPFILES:
+        if (pairedSelection()) jobs_drop(window, (HDROP)wParam);
+        else { DragFinish((HDROP)wParam); MessageBoxW(window, tr(L"Connect to a phone before sending files."), L"ConnectXP", MB_OK | MB_ICONINFORMATION); }
+        return 0;
     case WM_PAINT: {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
-        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 16, icons[0], 32, 32, 0, NULL, DI_NORMAL);
+        RECT client, panel, header, statusRect;
+        HWND child;
+        int height;
+        HGDIOBJ oldFont = SelectObject(dc, normalFont);
+        GetClientRect(window, &client);
+        GetWindowRect(statusBar, &statusRect);
+        height = client.bottom - (statusRect.bottom - statusRect.top);
+        SaveDC(dc);
+        /* Painting the task pane must never paint over its child controls. */
+        for (child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+            RECT occupied;
+            if (!IsWindowVisible(child)) continue;
+            GetWindowRect(child, &occupied);
+            MapWindowPoints(NULL, window, (POINT *)&occupied, 2);
+            ExcludeClipRect(dc, occupied.left, occupied.top, occupied.right, occupied.bottom);
+        }
+        SetRect(&panel, 0, 0, DEVICE_PANE_WIDTH, height);
+        theme_sidebar(dc, &panel);
+        SetRect(&panel, 12, height - 252, DEVICE_PANE_WIDTH - 12, height - 156);
+        theme_panel(dc, &panel, FALSE);
+        SetRect(&panel, 12, height - 120, DEVICE_PANE_WIDTH - 12, height - 24);
+        theme_panel(dc, &panel, FALSE);
+        SelectObject(dc, groupFont);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
+        SetRect(&header, 12, 16, DEVICE_PANE_WIDTH - 12, 44);
+        theme_panel(dc, &header, TRUE);
+        header.left += 8;
+        DrawTextW(dc, tr(L"Devices"), -1, &header, DT_SINGLELINE | DT_VCENTER);
+        SetRect(&header, 12, height - 280, DEVICE_PANE_WIDTH - 12, height - 252);
+        theme_panel(dc, &header, TRUE);
+        header.left += 8;
+        DrawTextW(dc, tr(L"File transfers"), -1, &header, DT_SINGLELINE | DT_VCENTER);
+        SetRect(&header, 12, height - 148, DEVICE_PANE_WIDTH - 12, height - 120);
+        theme_panel(dc, &header, TRUE);
+        header.left += 8;
+        DrawTextW(dc, tr(L"Other actions"), -1, &header, DT_SINGLELINE | DT_VCENTER);
+        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 24, phonePortrait ? phonePortrait : icons[0], 32, 32, 0, NULL, DI_NORMAL);
+        RestoreDC(dc, -1);
+        SelectObject(dc, oldFont);
         EndPaint(window, &paint);
         return 0;
     }
@@ -791,15 +1003,57 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         if (((NMHDR *)lParam)->hwndFrom == devices &&
             ((NMHDR *)lParam)->code == TVN_SELCHANGEDW) showPeer();
         return 0;
+    case WM_INCOMING: {
+        IncomingConnection *incoming = (IncomingConnection *)lParam;
+        SessionStatus snapshot;
+        int index;
+        session_status(&snapshot);
+        for (index = 0; index < peerCount; ++index) if (!strcmp(peers[index].identity.id, incoming->peer.identity.id)) break;
+        if (!incoming->peer.identity.port) incoming->peer.identity.port = index < peerCount && peers[index].identity.port ? peers[index].identity.port : 1716;
+        if (!autoPaused && (snapshot.phase == SESSION_IDLE || snapshot.phase == SESSION_ERROR || snapshot.phase == SESSION_CLOSED)) {
+            if (session_accept(&incoming->peer, incoming->socket)) {
+                if (index == peerCount && peerCount < MAX_PEERS) {
+                    ++peerCount;
+                    peerSaved[index] = TRUE;
+                }
+                if (index < peerCount) {
+                    peers[index] = incoming->peer; peerSeen[index] = TRUE;
+                    refreshPeerNode(index); TreeView_SelectItem(devices, peerNodes[index]);
+                }
+            }
+        } else closesocket(incoming->socket);
+        HeapFree(GetProcessHeap(), 0, incoming);
+        return 0;
+    }
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_AUTOCONNECT:
+        case ID_START_TRAY:
+        case ID_AUTOSTART: {
+            BOOL ok;
+            if (LOWORD(wParam) == ID_AUTOSTART) ok = settings_set_autostart(!settings_autostart());
+            else {
+                const WCHAR *key = LOWORD(wParam) == ID_AUTOCONNECT ? L"AutoConnect" : L"StartInTray";
+                BOOL enabled = !settings_get(key, LOWORD(wParam) == ID_AUTOCONNECT);
+                ok = settings_set(key, enabled);
+                if (ok && LOWORD(wParam) == ID_AUTOCONNECT) { autoPaused = !enabled; lastAutoAttempt = GetTickCount() - 15000; }
+            }
+            if (!ok) MessageBoxW(window, tr(L"Could not save settings."), L"ConnectXP", MB_OK | MB_ICONERROR);
+            updateLanguage(window);
+            break;
+        }
+        case ID_OPEN_FOLDER: jobs_open_folder(window); break;
+        case ID_HISTORY: jobs_show(window, normalFont); break;
+        case ID_SIDE_SEND: sendFile(window); break;
+        case ID_SIDE_RING: if (pairedSelection()) session_ring(); break;
+        case ID_SIDE_CLIPBOARD: clipboardMenu(window); break;
         case ID_LANGUAGE_ENGLISH:
         case ID_LANGUAGE_RUSSIAN:
             if (language_select(LOWORD(wParam) - ID_LANGUAGE_ENGLISH)) updateLanguage(window);
             else MessageBoxW(window, tr(L"Could not save the language setting."), L"ConnectXP", MB_OK | MB_ICONERROR);
             break;
         case ID_DEVICE_NAME:
-            if (device_name_dialog(window)) reconnectForName = TRUE;
+            if (device_name_dialog(window)) { reconnectForName = TRUE; network_service_announce(); }
             break;
         case ID_NOTIFICATIONS:
             restoreWindow(window);
@@ -825,12 +1079,13 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
                             L"ConnectXP", MB_OK | MB_ICONINFORMATION);
             break;
         case ID_RING: if (pairedSelection()) session_ring(); break;
-        case ID_CANCEL_TRANSFER: session_cancel_transfer(); break;
+        case ID_CANCEL_TRANSFER: jobs_cancel(); break;
         case ID_FORGET: {
             int selected = selectedPeer();
             if (selected >= 0 && selected < peerCount &&
                 MessageBoxW(window, tr(L"Remove the saved certificate for the selected device on this PC?"),
                     L"ConnectXP", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
+                autoPaused = TRUE;
                 if (session_forget(&peers[selected])) {
                     saved_device_forget_details(peers[selected].identity.id);
                     peerSaved[selected] = FALSE;
@@ -841,9 +1096,9 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
             }
             break;
         }
-        case ID_PAIR: pairSelected(window); break;
-        case ID_DISCONNECT: session_stop(); showPeer(); break;
-        case ID_DISCOVERY: startDiscovery(window); break;
+        case ID_PAIR: autoPaused = FALSE; lastAutoAttempt = GetTickCount(); pairSelected(window); break;
+        case ID_DISCONNECT: autoPaused = TRUE; session_stop(); showPeer(); break;
+        case ID_DISCOVERY: startDiscovery(window); network_service_announce(); break;
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
@@ -856,7 +1111,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
             balloonBusy = FALSE;
             balloonEnded = GetTickCount();
             restoreWindow(window);
-            notifications_ui_show(window, normalFont, balloonId);
+            if (balloonId[0]) notifications_ui_show(window, normalFont, balloonId);
         } else if (lParam == NIN_BALLOONTIMEOUT || lParam == NIN_BALLOONHIDE) {
             balloonBusy = FALSE;
             balloonEnded = GetTickCount();
@@ -866,14 +1121,31 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_CLOSE:
         DestroyWindow(window);
         return 0;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        MSG pending;
+        network_service_stop();
+        while (PeekMessageW(&pending, window, WM_INCOMING, WM_INCOMING, PM_REMOVE)) {
+            IncomingConnection *incoming = (IncomingConnection *)pending.lParam;
+            closesocket(incoming->socket);
+            HeapFree(GetProcessHeap(), 0, incoming);
+        }
+        jobs_close();
+        theme_close();
         notifications_ui_close();
         KillTimer(window, 1);
         session_stop();
+        {
+            SessionStatus snapshot;
+            session_status(&snapshot);
+            jobs_tick(window, normalFont, &snapshot);
+        }
         discovery_stop();
         if (trayAdded) Shell_NotifyIconW(NIM_DELETE, &tray);
+        if (batteryAdded) { NOTIFYICONDATAW item = tray; item.uID = 2; Shell_NotifyIconW(NIM_DELETE, &item); }
+        if (batteryIcon) { DestroyIcon(batteryIcon); batteryIcon = NULL; }
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
@@ -883,23 +1155,35 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     WNDCLASSEXW cls;
     INITCOMMONCONTROLSEX common;
     HWND window;
+    HANDLE singleton;
     MSG message;
     HACCEL shortcuts;
     ACCEL pasteShortcut = {FVIRTKEY | FCONTROL | FSHIFT, 'V', ID_RECEIVE_CLIPBOARD};
     int result, index;
     (void)previous;
-    (void)command;
+    startInTray = (command && strstr(command, "--tray")) || settings_get(L"StartInTray", FALSE);
     instance = current;
     language_load();
+    singleton = CreateMutexW(NULL, FALSE, L"Local\\ConnectXP.Desktop");
+    if (singleton && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND running = FindWindowW(L"ConnectXP.MainWindow", NULL);
+        if (running) { ShowWindow(running, SW_RESTORE); SetForegroundWindow(running); }
+        CloseHandle(singleton);
+        return 0;
+    }
     clipboardSequence = GetClipboardSequenceNumber();
-    session_init();
+    if (!session_init()) {
+        MessageBoxW(NULL, tr(L"Could not initialize cryptography."), L"ConnectXP", MB_OK | MB_ICONERROR);
+        return 1;
+    }
     common.dwSize = sizeof(common);
-    common.dwICC = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
+    common.dwICC = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES | ICC_ANIMATE_CLASS;
     if (!InitCommonControlsEx(&common)) return 1;
     icons[0] = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 32, 32, 0);
-    icons[1] = loadSystemIcon(4, 102);
-    icons[2] = loadSystemIcon(22, 103);
-    icons[3] = loadSystemIcon(1, 104);
+    icons[1] = loadSystemIcon(4, 102, 16);
+    icons[2] = loadSystemIcon(22, 103, 16);
+    icons[3] = loadSystemIcon(1, 104, 16);
+    phonePortrait = loadPhoneIcon(32);
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     ZeroMemory(&cls, sizeof(cls));
     cls.cbSize = sizeof(cls);
@@ -911,16 +1195,17 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
     cls.lpszClassName = L"ConnectXP.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
-    window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 660, 360, NULL, createMenu(), instance, NULL);
+    window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 880, 560, NULL, createMenu(), instance, NULL);
     if (!window) {
         MessageBoxW(NULL, tr(L"Could not create the ConnectXP window."), L"ConnectXP", MB_ICONERROR);
         return 1;
     }
     shortcuts = CreateAcceleratorTableW(&pasteShortcut, 1);
-    ShowWindow(window, show);
+    if (!startInTray || !trayAdded) ShowWindow(window, show);
     UpdateWindow(window);
     while ((result = GetMessageW(&message, NULL, 0, 0)) > 0) {
+        if (jobs_message(&message)) continue;
         if (!shortcuts || (message.hwnd != window && !IsChild(window, message.hwnd)) ||
             !TranslateAcceleratorW(window, shortcuts, &message)) {
             TranslateMessage(&message);
@@ -932,7 +1217,10 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     if (deviceImages) ImageList_Destroy(deviceImages);
     DeleteObject(normalFont);
     DeleteObject(titleFont);
+    DeleteObject(groupFont);
     for (index = 0; index < 4; ++index) DestroyIcon(icons[index]);
     DestroyIcon(cls.hIconSm);
+    if (phonePortrait) DestroyIcon(phonePortrait);
+    if (singleton) CloseHandle(singleton);
     return result == -1 ? 1 : (int)message.wParam;
 }
