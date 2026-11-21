@@ -245,6 +245,8 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
         cls.lpfnWndProc = notificationProc;
         cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
         cls.hIcon = (HICON)SendMessageW(owner, WM_GETICON, ICON_SMALL, 0);
+        if (!cls.hIcon) cls.hIcon = (HICON)GetClassLongPtrW(owner, GCLP_HICONSM);
+        if (!cls.hIcon) cls.hIcon = (HICON)GetClassLongPtrW(owner, GCLP_HICON);
         if (!cls.hIcon) cls.hIcon = LoadIconW(NULL, IDI_INFORMATION);
         cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
         cls.lpszClassName = L"ConnectXP.Notifications";

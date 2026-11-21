@@ -2,9 +2,11 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.9.0 has an English interface, native Windows shell icons, a compact
+Version 0.9.1 has an English interface, a custom application icon, native Windows shell action icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
 The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
+The application icon was supplied by Daniel Myslivets. Its original DIB frames
+are embedded for Windows XP compatibility. The About dialog credits the idea author.
 
 ## Pairing
 
@@ -171,7 +173,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.9.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.9.1 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 

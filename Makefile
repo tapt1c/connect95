@@ -12,7 +12,7 @@ all: build/connectxp.exe
 build:
 	mkdir -p build
 
-build/resources.o: resources/connectxp.rc resources/connectxp.manifest resources/resource.h resources/phone.ico resources/send.ico resources/ring.ico resources/clipboard.ico | build
+build/resources.o: resources/connectxp.rc resources/connectxp.manifest resources/resource.h resources/connectxp.ico resources/phone.ico resources/send.ico resources/ring.ico resources/clipboard.ico | build
 	$(WINDRES) -I resources $< $@
 
 build/connectxp.exe: src/main.c src/device_name.c src/notifications.c src/notifications_ui.c src/saved_devices.c src/clipboard.c src/device_plugins.c src/packet.c src/share_info.c src/transfer.c src/transport.c src/pairing.c src/session.c src/credentials.c src/discovery.c src/identity.c src/vendor/cJSON.c build/resources.o src/discovery.h src/identity.h src/vendor/cJSON.h src/session.h src/device_name.h resources/resource.h src/notifications.h src/notifications_ui.h src/saved_devices.h src/clipboard.h src/device_plugins.h src/packet.h src/share_info.h src/transfer.h src/transport.h src/pairing.h src/credentials.h src/tls_config.h $(TLS_LIBS)

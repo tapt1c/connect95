@@ -4,6 +4,7 @@
 #include "saved_devices.h"
 #include "notifications_ui.h"
 #include "device_name.h"
+#include "../resources/resource.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -781,10 +782,8 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "ConnectXP", "ConnectXP 0.9.0\r\n"
-                "KDE Connect companion for Windows XP.\r\n"
-                "Written in C using Win32.\r\n"
-                "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
+            ShellAboutA(window, "ConnectXP", "Idea author - Daniel Myslivets\r\n"
+                "KDE Connect implementation for Windows XP", icons[0]);
             break;
         }
         return 0;
@@ -832,7 +831,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     common.dwSize = sizeof(common);
     common.dwICC = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES;
     if (!InitCommonControlsEx(&common)) return 1;
-    icons[0] = loadSystemIcon(17, 101);
+    icons[0] = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 32, 32, 0);
     icons[1] = loadSystemIcon(4, 102);
     icons[2] = loadSystemIcon(22, 103);
     icons[3] = loadSystemIcon(1, 104);
@@ -843,7 +842,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.lpfnWndProc = windowProc;
     cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
     cls.hIcon = icons[0];
-    cls.hIconSm = (HICON)CopyImage(icons[0], IMAGE_ICON, 16, 16, 0);
+    cls.hIconSm = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 16, 16, 0);
     cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
     cls.lpszClassName = L"ConnectXP.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
