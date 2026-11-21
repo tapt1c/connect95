@@ -15,7 +15,7 @@ build:
 build/resources.o: resources/connectxp.rc resources/connectxp.manifest resources/resource.h resources/connectxp.ico resources/phone.ico resources/send.ico resources/ring.ico resources/clipboard.ico | build
 	$(WINDRES) -I resources $< $@
 
-build/connectxp.exe: src/main.c src/ui_layout.c src/shell_style.c src/theme.c src/settings.c src/network_service.c src/media.c src/file_jobs.c src/language.c src/device_name.c src/notifications.c src/notifications_ui.c src/saved_devices.c src/clipboard.c src/device_plugins.c src/packet.c src/share_info.c src/transfer.c src/transport.c src/pairing.c src/session.c src/credentials.c src/discovery.c src/identity.c src/vendor/cJSON.c build/resources.o src/discovery.h src/identity.h src/vendor/cJSON.h src/session.h src/shell_style.h src/ui_layout.h src/main_layout.h src/sidebar_layout.h src/theme.h src/settings.h src/network_service.h src/media.h src/file_jobs.h src/language.h src/device_name.h resources/resource.h src/notifications.h src/notifications_ui.h src/saved_devices.h src/clipboard.h src/device_plugins.h src/packet.h src/share_info.h src/transfer.h src/transport.h src/pairing.h src/credentials.h src/tls_config.h $(TLS_LIBS)
+build/connectxp.exe: src/main.c src/ui_paint.c src/ui_layout.c src/shell_style.c src/theme.c src/settings.c src/network_service.c src/media.c src/file_jobs.c src/language.c src/device_name.c src/notifications.c src/notifications_ui.c src/saved_devices.c src/clipboard.c src/device_plugins.c src/packet.c src/share_info.c src/transfer.c src/transport.c src/pairing.c src/session.c src/credentials.c src/discovery.c src/identity.c src/vendor/cJSON.c build/resources.o src/discovery.h src/identity.h src/vendor/cJSON.h src/session.h src/ui_paint.h src/shell_style.h src/ui_layout.h src/main_layout.h src/sidebar_layout.h src/theme.h src/settings.h src/network_service.h src/media.h src/file_jobs.h src/language.h src/device_name.h resources/resource.h src/notifications.h src/notifications_ui.h src/saved_devices.h src/clipboard.h src/device_plugins.h src/packet.h src/share_info.h src/transfer.h src/transport.h src/pairing.h src/credentials.h src/tls_config.h $(TLS_LIBS)
 	$(CC) $(CFLAGS) $(TLS_FLAGS) -mwindows -static -Wl,--gc-sections -Wl,--major-subsystem-version,5,--minor-subsystem-version,1 -o $@ $(filter %.c %.o,$^) $(TLS_LIBS) $(LDLIBS)
 
 clean:
@@ -34,6 +34,8 @@ test: | build
 	./build/media-test
 	$(HOST_CC) -std=c99 -Wall -Wextra -Werror -Isrc tests/shell_style_test.c src/shell_style.c -o build/shell-style-test
 	./build/shell-style-test
+	$(HOST_CC) -std=c99 -Wall -Wextra -Werror -Itests/mock_win32 -Isrc tests/ui_paint_test.c src/ui_paint.c src/ui_layout.c -o build/ui-paint-test
+	./build/ui-paint-test
 
 .PHONY: test
 

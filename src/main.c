@@ -6,6 +6,7 @@
 #include "theme.h"
 #include "sidebar_layout.h"
 #include "ui_layout.h"
+#include "ui_paint.h"
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
@@ -642,6 +643,7 @@ static HWND control(HWND parent, const WCHAR *kind, const WCHAR *text,
                                  0, 0, 0, 0, parent, (HMENU)(INT_PTR)id,
                                  instance, NULL);
     if (child) SendMessageW(child, WM_SETFONT, (WPARAM)normalFont, TRUE);
+    if (child && (style & BS_TYPEMASK) == BS_OWNERDRAW) ui_owner_draw(child);
     if (child && (id == ID_SIDE_SEND || id == ID_OPEN_FOLDER || id == ID_HISTORY ||
                   id == ID_SIDE_RING || id == ID_NOTIFICATIONS || id == ID_SIDE_CLIPBOARD))
         SetWindowSubclass(child, taskLinkProc, 1, 0);
@@ -867,7 +869,8 @@ static void drawButton(const DRAWITEMSTRUCT *item)
         theme_sidebar(item->hDC, &pane);
         RestoreDC(item->hDC, -1);
         GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
-        theme_group_header(item->hDC, &rect, label, groupFont, groupCollapsed[item->CtlID - ID_GROUP_DEVICES], (item->itemState & ODS_FOCUS) != 0);
+        theme_group_header(item->hDC, &rect, label, groupFont, groupCollapsed[item->CtlID - ID_GROUP_DEVICES],
+            (item->itemState & ODS_FOCUS) && !(item->itemState & ODS_NOFOCUSRECT));
         return;
     }
     if (side) theme_link_background(item->hDC, &rect);
@@ -891,7 +894,7 @@ static void drawButton(const DRAWITEMSTRUCT *item)
     textRect.right -= 4;
     DrawTextW(item->hDC, label, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item->hDC, previous);
-    if (item->itemState & ODS_FOCUS) {
+    if ((item->itemState & ODS_FOCUS) && !(item->itemState & ODS_NOFOCUSRECT)) {
         InflateRect(&rect, -3, -3);
         DrawFocusRect(item->hDC, &rect);
     }
@@ -1030,7 +1033,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         layout(window);
         return 0;
     case WM_DRAWITEM:
-        drawButton((const DRAWITEMSTRUCT *)lParam);
+        ui_draw_item((const DRAWITEMSTRUCT *)lParam, drawButton);
         return TRUE;
     case WM_THEMECHANGED:
     case WM_SYSCOLORCHANGE:

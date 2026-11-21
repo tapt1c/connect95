@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.2 introduces an Explorer-style task pane, compact themed action buttons,
+Version 0.11.3 introduces an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
@@ -20,8 +20,13 @@ notifications and transfer popups also start within the work area.
 
 Main-window section frames are background decorations rather than overlapping
 child group-box windows. Foreground controls move in one deferred batch before
-one invalidation. The parent clips child areas and paints its background through
-a memory DC, preventing resizing from erasing or copying over buttons and text.
+one synchronous redraw before the resize callback returns. The parent clips child
+areas and paints its background through a memory DC. Owner-drawn buttons also
+suppress separate background erasure and render WM_PAINT/WM_PRINTCLIENT through
+the parent's buffered WM_DRAWITEM path. Native BUTTON input, pressed/disabled
+state and keyboard focus cues are retained. Each button's completed image is
+copied once, including its background and transparent corners. Layout moves
+explicitly discard old copied client pixels with SWP_NOCOPYBITS.
 History and notification windows also batch their layout updates.
 
 On XP, Explorer task panes can be defined in the active theme's
@@ -282,7 +287,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.2 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.3 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -345,9 +350,15 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.2 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.3 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,
 history after restart, classic/Luna theme switching while open, and media keys
 with a compatible player. These are a checklist, not claimed completed tests.
+
+UI painting has a host test with mocked Win32/GDI calls for native erase
+suppression, direct WM_PAINT/WM_PRINTCLIENT routing, pressed/disabled/focus state,
+full-frame buffering, resource cleanup, allocation fallbacks and synchronous
+repaint after a complete deferred layout. This checks API ordering and logic;
+real Windows XP GDI/VMware rendering still needs a visual resize check.
