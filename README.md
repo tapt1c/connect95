@@ -1,20 +1,20 @@
-# Connect95
+# ConnectXP
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.8.0 has an English interface, native Windows shell icons, a compact
+Version 0.9.0 has an English interface, native Windows shell icons, a compact
 660×360 window, tray support, and an About dialog using `ShellAboutA`.
 The device pane groups saved and discovered devices with phone icons. Luna appearance follows the Windows theme.
 
 ## Pairing
 
 1. Connect the PC and phone to the same LAN.
-2. Open Connect95 and refresh devices in KDE Connect on the phone.
+2. Open ConnectXP and refresh devices in KDE Connect on the phone.
 3. Select the phone and click **Pair / connect**.
 4. Accept the request on the phone, compare the eight-character code, and confirm the match on the PC.
 
 Discovery listens on IPv4 UDP 1716 and accepts protocol 7 and 8 announcements.
-TLS connections and pairing currently support **protocol 7**. Connect95 initiates
+TLS connections and pairing currently support **protocol 7**. ConnectXP initiates
 one control connection from the PC. Incoming control connections, active discovery
 announcements, protocol 8 pairing, and automatic reconnect are pending.
 
@@ -30,7 +30,7 @@ on the phone. Names support Unicode and up to 32 UTF-16 code units. The dialog
 checks characters filtered by KDE Connect and reports invalid input.
 
 The preference is stored as `DeviceName` under `HKEY_CURRENT_USER\Software\Connect95`.
-An unset preference uses **Connect95**. An idle paired connection reconnects after
+An unset preference uses **ConnectXP**. An idle paired connection reconnects after
 saving a changed name. During a file transfer, reconnect waits until completion.
 When disconnected, the configured name is used on the next connection.
 
@@ -63,8 +63,9 @@ After connecting, **Send file** opens the native Windows file picker.
 **Find phone** sends `kdeconnect.findmyphone.request` to the paired phone.
 The phone's KDE Connect plugins must be enabled for these features.
 
-To receive a file, share it from Android using KDE Connect and choose Connect95.
-Files are saved under **My Documents\Connect95**. Existing files are preserved,
+To receive a file, share it from Android using KDE Connect and choose ConnectXP.
+Files are saved under **My Documents\ConnectXP**. Earlier downloads are available
+in **My Documents\Connect95**. Existing files are preserved,
 with numbered names used for collisions. Files are received into temporary
 `.part` files, checked for completeness, and renamed after saving. Failed or
 cancelled transfers remove their temporary file. Files are never opened automatically.
@@ -86,6 +87,18 @@ After upgrading, close the old executable, start the new one, and reconnect so
 Android receives the updated plugin capabilities. Existing pairing is stored in
 the user profile and can be reused.
 
+## Ping
+
+Select a connected device and choose **Device → Send ping**. ConnectXP sends the
+standard `kdeconnect.ping` packet over the paired TLS connection. Enable the Ping
+plugin in KDE Connect on the phone.
+
+Incoming pings produce native XP tray balloons and entries in **Notifications**.
+The title identifies the sending device. Optional message text is displayed,
+and a packet with no message uses **Ping!**. Repeated identical incoming pings
+create separate alerts. Ping uses the application's serialized network loop and
+is queued during an active file transfer.
+
 ## Battery and clipboard
 
 The phone battery percentage and charging status appear below the connection
@@ -98,7 +111,7 @@ The **Clipboard** button opens a menu with these actions.
 - **Sync text clipboard automatically** enables two-way synchronization for this connection.
 
 The same paste action is available from **Edit → Paste phone clipboard to PC**,
-or **Ctrl+Shift+V** while the main Connect95 window is focused. First use KDE Connect's explicit
+or **Ctrl+Shift+V** while the main ConnectXP window is focused. First use KDE Connect's explicit
 **Send clipboard** action on the phone if Android restricts background reading.
 The paste action becomes available after text arrives from the paired phone.
 
@@ -117,7 +130,7 @@ while a file transfer is running are queued, with the latest queued text retaine
 ## Phone notifications
 
 Enable **Notification sync** in KDE Connect on Android and grant it notification
-access in Android settings. Restart Connect95 and reconnect so the phone sees
+access in Android settings. Restart ConnectXP and reconnect so the phone sees
 the notification capability.
 
 New non-silent notifications appear as native Windows XP balloons above the tray
@@ -152,12 +165,13 @@ this application. The system date must be correct for certificate validation.
 
 The identity is generated on first connection and stored in
 `%APPDATA%\Connect95\identity.dat`. Phone certificates use `peer-<deviceId>.der`
-in the same directory. DPAPI binds the identity to its Windows user profile.
+in the same directory. The established Connect95 profile and registry namespace
+provide upgrade compatibility for ConnectXP. DPAPI binds the identity to its Windows user profile.
 Unreadable identities are preserved for recovery. Profile access is locked against
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.8.0 file transfer, ringing, dialogs, and filesystem handling still need
+Version 0.9.0 file transfer, ringing, dialogs, and filesystem handling still need
 validation with a real Windows/Android pair. Automated TLS tests use an in-memory
 transport on Linux. Import checks catch known XP-incompatible dependencies.
 
@@ -172,7 +186,7 @@ make
 
 The first build fetches Mbed TLS 3.6.8 and its framework into `.deps/mbedtls`.
 The source commit is pinned to `82e69999f91126589a28b70dd75b69fbcabe2711`.
-Access to `github.com` is required. The output is `build/connect95.exe`.
+Access to `github.com` is required. The output is `build/connectxp.exe`.
 The executable uses system Win32 DLLs and statically linked Mbed TLS.
 
 From a Windows shell with a compatible 32-bit MinGW toolchain and Make:
@@ -189,7 +203,7 @@ version 5.1. Runtime compatibility requires testing on XP SP3.
 ```sh
 make test
 make test-pairing
-python3 tests/check_xp_imports.py i686-w64-mingw32-objdump build/connect95.exe
+python3 tests/check_xp_imports.py i686-w64-mingw32-objdump build/connectxp.exe
 ```
 
 The pairing tests require a native C compiler, OpenSSL CLI, and Python 3. They
@@ -197,7 +211,7 @@ build native Mbed TLS in `.deps/mbedtls-host` and generate temporary certificate
 Notification model tests run as part of `make test`. Tests cover TLS 1.2, binary payloads in both directions, verification codes checked
 against an independent hash, certificate identity errors, PEM reloading, malformed
 packets, file metadata, empty files, large sizes, unsafe Windows filenames, battery fields, clipboard
-limits, escaped text, and connection-time clipboard timestamps, notification ID normalization, duplicate
+limits, escaped text, and connection-time clipboard timestamps, empty/custom/invalid ping messages, notification ID normalization, duplicate
 updates, repeat messages with new event times, silent history, cancellation,
 alert queue order, and bounded storage.
 
@@ -208,7 +222,8 @@ automatic sync on/off, reconnect, busy clipboards, menu actions, tray restore,
 the About dialog, saved-device persistence across restart, offline selection,
 group migration after pairing/forgetting, Ctrl+Shift+V clipboard import, notification updates/cancellations, silent initial
 sync, balloon clicks, disabled maximize commands, custom names including Cyrillic text, restart
-persistence, and renaming during a file transfer.
+persistence, renaming during a file transfer, ping sending from the Device menu, and repeated
+incoming pings including Unicode messages.
 
 The protocol was checked against KDE Connect sources at commit
 `6fa6dac15f1019bff6a922cf3014e222f5140f66` and the Android implementation.

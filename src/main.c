@@ -27,6 +27,7 @@
 #define ID_SEND_CLIPBOARD 227
 #define ID_NOTIFICATIONS 230
 #define ID_DEVICE_NAME 231
+#define ID_PING 232
 #define MAX_PEERS 64
 #define DEVICE_PANE_WIDTH 175
 
@@ -110,7 +111,7 @@ static void syncSavedDevices(HWND window, const SessionStatus *snapshot)
             if (saved >= 0) peerSaved[i] = saved;
             if (peerConnected[i] && peerSaved[i] && peers[i].address[0] && !saved_device_remember(&peers[i]))
                 MessageBoxW(window, L"Pairing is saved, but the device name and address could not be remembered.",
-                            L"Connect95", MB_OK | MB_ICONWARNING);
+                            L"ConnectXP", MB_OK | MB_ICONWARNING);
             if (!peerSaved[i]) saved_device_forget_details(peers[i].identity.id);
         }
         refreshPeerNode(i);
@@ -132,6 +133,7 @@ static void showPeer(void)
              !strcmp(session.deviceId, peers[selected].identity.id);
     EnableWindow(sendButton, paired && !session.transferActive);
     EnableWindow(ringButton, paired);
+    EnableMenuItem(GetMenu(GetParent(devices)), ID_PING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     EnableWindow(clipboardButton, paired);
     CheckMenuItem(GetMenu(GetParent(devices)), ID_SYNC_CLIPBOARD,
                   MF_BYCOMMAND | (session.clipboardSync ? MF_CHECKED : MF_UNCHECKED));
@@ -148,7 +150,7 @@ static void showPeer(void)
     EnableMenuItem(GetMenu(GetParent(devices)), ID_RING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     if (selected < 0 || selected >= peerCount) {
         EnableWindow(pairButton, FALSE);
-        SetWindowTextW(heading, L"Connect95");
+        SetWindowTextW(heading, L"ConnectXP");
         SetWindowTextW(state, L"Select a device from either group.");
         SetWindowTextW(transferText, L"No active transfers");
         SendMessageW(progress, PBM_SETPOS, 0, 0);
@@ -195,16 +197,16 @@ static void pairSelected(HWND window)
     int selected = selectedPeer();
     if (selected < 0 || selected >= peerCount) return;
     if (!peers[selected].address[0]) {
-        MessageBoxW(window, L"Refresh discovery in KDE Connect on the phone to find its address.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(window, L"Refresh discovery in KDE Connect on the phone to find its address.", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
         return;
     }
     if (peers[selected].identity.version != 7) {
-        MessageBoxW(window, L"This release supports pairing with protocol 7. Protocol 8 pairing is under development.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(window, L"This release supports pairing with protocol 7. Protocol 8 pairing is under development.", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
         return;
     }
     appliedClipboard = 0;
     if (!session_start(&peers[selected]))
-        MessageBoxW(window, L"Could not start the connection.", L"Connect95", MB_OK | MB_ICONERROR);
+        MessageBoxW(window, L"Could not start the connection.", L"ConnectXP", MB_OK | MB_ICONERROR);
     showPeer();
 }
 
@@ -231,7 +233,7 @@ static void sendFile(HWND window)
     dialog.lpstrTitle = L"Send file to phone";
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
     if (GetOpenFileNameW(&dialog) && pairedSelection() && !session_send_file(path))
-        MessageBoxW(window, L"A transfer is already in progress or the connection has closed.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(window, L"A transfer is already in progress or the connection has closed.", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
     showPeer();
 }
 
@@ -245,7 +247,7 @@ static void sendClipboard(HWND window, BOOL automatic)
     SecureZeroMemory(text, sizeof(text));
     if (read != 1 && !automatic)
         MessageBoxW(window, read == 0 ? L"The clipboard is busy. Please try again." :
-            L"Copy plain text of up to 8 KiB (UTF-8) before sending it.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+            L"Copy plain text of up to 8 KiB (UTF-8) before sending it.", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
 }
 
 static int receiveClipboard(HWND window, BOOL manual)
@@ -267,7 +269,7 @@ static int receiveClipboard(HWND window, BOOL manual)
     }
     SecureZeroMemory(&message, sizeof(message));
     if (manual && result != 1)
-        MessageBoxW(window, L"Cannot update the clipboard. Please try again.", L"Connect95", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(window, L"Cannot update the clipboard. Please try again.", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
     return result;
 }
 
@@ -388,7 +390,7 @@ static void pollSession(HWND window)
     if (snapshot.phase == SESSION_CONFIRM && !confirmationShown) {
         confirmationShown = TRUE;
         wsprintfW(question, L"Pairing code %s\n\nDoes it match the code on your phone?\nConfirm only when both codes match.", snapshot.code);
-        session_confirm(MessageBoxW(window, question, L"Connect95 — verify device",
+        session_confirm(MessageBoxW(window, question, L"ConnectXP — verify device",
             MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES);
     }
     showPeer();
@@ -483,6 +485,7 @@ static HMENU createMenu(void)
     AppendMenuW(device, MF_STRING, ID_DISCONNECT, L"Disconnect");
     AppendMenuW(device, MF_STRING, ID_FORGET, L"Forget pairing on this PC…");
     AppendMenuW(device, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(device, MF_STRING | MF_GRAYED, ID_PING, L"Send ping");
     AppendMenuW(device, MF_STRING | MF_GRAYED, ID_RING, L"Find phone");
     AppendMenuW(edit, MF_STRING, ID_DEVICE_NAME, L"PC device name…");
     AppendMenuW(edit, MF_SEPARATOR, 0, NULL);
@@ -509,7 +512,7 @@ static void addTray(HWND window)
     tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     tray.uCallbackMessage = WM_TRAY;
     tray.hIcon = icons[0];
-    lstrcpynW(tray.szTip, L"Connect95", ARRAYSIZE(tray.szTip));
+    lstrcpynW(tray.szTip, L"ConnectXP", ARRAYSIZE(tray.szTip));
     trayAdded = Shell_NotifyIconW(NIM_ADD, &tray);
     balloonBusy = FALSE;
 }
@@ -524,7 +527,7 @@ static void trayMenu(HWND window)
 {
     POINT position;
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, ID_SHOW, L"Open Connect95");
+    AppendMenuW(menu, MF_STRING, ID_SHOW, L"Open ConnectXP");
     AppendMenuW(menu, MF_STRING, ID_NOTIFICATIONS, L"Notifications…");
     AppendMenuW(menu, MF_STRING, ID_ABOUT, L"About…");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
@@ -658,7 +661,7 @@ static BOOL createControls(HWND window)
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, window, NULL, instance, NULL);
     SendMessageW(devices, WM_SETFONT, (WPARAM)normalFont, TRUE);
-    heading = control(window, L"STATIC", L"Connect95", SS_LEFT, 0);
+    heading = control(window, L"STATIC", L"ConnectXP", SS_LEFT, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
     state = control(window, L"STATIC", L"No connected devices", SS_LEFT, 0);
     battery = control(window, L"STATIC", L"Battery —", SS_LEFT, 0);
@@ -750,13 +753,18 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
             break;
         }
         case ID_SEND: sendFile(window); break;
+        case ID_PING:
+            if (pairedSelection() && !session_ping())
+                MessageBoxW(window, L"Cannot queue the ping. Check the connection or retry after the current transfer.",
+                            L"ConnectXP", MB_OK | MB_ICONINFORMATION);
+            break;
         case ID_RING: if (pairedSelection()) session_ring(); break;
         case ID_CANCEL_TRANSFER: session_cancel_transfer(); break;
         case ID_FORGET: {
             int selected = selectedPeer();
             if (selected >= 0 && selected < peerCount &&
                 MessageBoxW(window, L"Remove the saved certificate for the selected device on this PC?",
-                    L"Connect95", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
+                    L"ConnectXP", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
                 if (session_forget(&peers[selected])) {
                     saved_device_forget_details(peers[selected].identity.id);
                     peerSaved[selected] = FALSE;
@@ -773,7 +781,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         case ID_EXIT: DestroyWindow(window); break;
         case ID_SHOW: restoreWindow(window); break;
         case ID_ABOUT:
-            ShellAboutA(window, "Connect95", "Connect95 0.8.0\r\n"
+            ShellAboutA(window, "ConnectXP", "ConnectXP 0.9.0\r\n"
                 "KDE Connect companion for Windows XP.\r\n"
                 "Written in C using Win32.\r\n"
                 "Files, battery, clipboard and find phone over TLS 1.2. Mbed TLS 3.6.8, cJSON.", icons[0]);
@@ -837,12 +845,12 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.hIcon = icons[0];
     cls.hIconSm = (HICON)CopyImage(icons[0], IMAGE_ICON, 16, 16, 0);
     cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-    cls.lpszClassName = L"Connect95.MainWindow";
+    cls.lpszClassName = L"ConnectXP.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
-    window = CreateWindowExW(0, cls.lpszClassName, L"Connect95", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
+    window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 660, 360, NULL, createMenu(), instance, NULL);
     if (!window) {
-        MessageBoxW(NULL, L"Could not create the Connect95 window.", L"Connect95", MB_ICONERROR);
+        MessageBoxW(NULL, L"Could not create the ConnectXP window.", L"ConnectXP", MB_ICONERROR);
         return 1;
     }
     shortcuts = CreateAcceleratorTableW(&pasteShortcut, 1);

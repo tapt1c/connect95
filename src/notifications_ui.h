@@ -1,5 +1,5 @@
-#ifndef CONNECT95_NOTIFICATIONS_UI_H
-#define CONNECT95_NOTIFICATIONS_UI_H
+#ifndef CONNECTXP_NOTIFICATIONS_UI_H
+#define CONNECTXP_NOTIFICATIONS_UI_H
 #include "session.h"
 void notifications_ui_show(HWND owner, HFONT font, const char *id);
 void notifications_ui_tick(const SessionStatus *snapshot);

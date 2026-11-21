@@ -1,5 +1,5 @@
-#ifndef CONNECT95_DISCOVERY_H
-#define CONNECT95_DISCOVERY_H
+#ifndef CONNECTXP_DISCOVERY_H
+#define CONNECTXP_DISCOVERY_H
 #include <winsock2.h>
 #include <windows.h>
 #include "identity.h"

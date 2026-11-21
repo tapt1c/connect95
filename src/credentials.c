@@ -99,7 +99,7 @@ int credentials_load(Credentials *c)
     c->lock = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (c->lock == INVALID_HANDLE_VALUE) return 0;
     if (mbedtls_ctr_drbg_seed(&c->random, mbedtls_entropy_func, &c->entropy,
-                              (const unsigned char *)"Connect95", 9)) return 0;
+                              (const unsigned char *)"ConnectXP", 9)) return 0;
     wsprintfW(path, L"%s\\identity.dat", c->directory);
     result = read_file(path, fileData, sizeof(fileData), &length);
     if (result < 0) return 0;
@@ -122,7 +122,7 @@ int credentials_load(Credentials *c)
     if (mbedtls_pk_setup(&c->key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) ||
         mbedtls_rsa_gen_key(mbedtls_pk_rsa(c->key), mbedtls_ctr_drbg_random, &c->random, 2048, 65537)) return 0;
     mbedtls_x509write_crt_init(&writer);
-    snprintf(subject, sizeof(subject), "CN=%s,O=Connect95,OU=KDE Connect", c->id);
+    snprintf(subject, sizeof(subject), "CN=%s,O=ConnectXP,OU=KDE Connect", c->id);
     GetSystemTime(&now);
     snprintf(expiry, sizeof(expiry), "%04u0101000000", (unsigned int)now.wYear + 10);
     mbedtls_x509write_crt_set_version(&writer, MBEDTLS_X509_CRT_VERSION_3);
@@ -141,7 +141,7 @@ int credentials_load(Credentials *c)
         mbedtls_x509_crt_parse(&c->certificate, pem + keyLength, strlen((char *)pem + keyLength) + 1)) goto generated;
     input.pbData = pem;
     input.cbData = (DWORD)strlen((char *)pem) + 1;
-    if (!CryptProtectData(&input, L"Connect95 identity", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &output)) goto generated;
+    if (!CryptProtectData(&input, L"ConnectXP identity", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &output)) goto generated;
     success = write_file(path, output.pbData, output.cbData);
     SecureZeroMemory(output.pbData, output.cbData);
     LocalFree(output.pbData);

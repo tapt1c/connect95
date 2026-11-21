@@ -92,7 +92,7 @@ const WCHAR *transfer_send(TransferContext *context, const WCHAR *path)
     packet = share_packet(name, (ULONGLONG)size.QuadPart, port);
     if (!packet || transport_cancelled(&payload) || !transport_json(context->control, packet, TRUE)) goto finish;
     if (size.QuadPart) {
-        error = L"The phone did not connect. Allow inbound TCP 1739-1764 for Connect95.";
+        error = L"The phone did not connect. Allow inbound TCP 1739-1764 for ConnectXP.";
         if (!accept_payload(&payload, listener, context->peer->address)) goto finish;
         closesocket(listener);
         listener = INVALID_SOCKET;
@@ -123,7 +123,7 @@ static int receive_directory(WCHAR *directory)
 {
     if (SHGetFolderPathW(NULL, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL, 0, directory) != S_OK ||
         lstrlenW(directory) + 10 >= MAX_PATH) return 0;
-    lstrcatW(directory, L"\\Connect95");
+    lstrcatW(directory, L"\\ConnectXP");
     return CreateDirectoryW(directory, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
@@ -137,7 +137,7 @@ static HANDLE temporary_file(TransferContext *context, const WCHAR *directory, W
         HANDLE file;
         if (mbedtls_ctr_drbg_random(&context->credentials->random, random, sizeof(random))) return INVALID_HANDLE_VALUE;
         for (i = 0; i < 8; ++i) wsprintfW(hex + i * 2, L"%02x", random[i]);
-        wsprintfW(candidate, L"%s\\.connect95-%s.part", directory, hex);
+        wsprintfW(candidate, L"%s\\.connectxp-%s.part", directory, hex);
         file = CreateFileW(candidate, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
         if (file != INVALID_HANDLE_VALUE) {
             lstrcpyW(path, candidate);
@@ -171,7 +171,7 @@ const WCHAR *transfer_receive(TransferContext *context, const ShareInfo *offer)
     unsigned char buffer[16384];
     HANDLE file = INVALID_HANDLE_VALUE;
     ULONGLONG done = 0;
-    const WCHAR *error = L"Cannot create the received file in My Documents\\Connect95.";
+    const WCHAR *error = L"Cannot create the received file in My Documents\\ConnectXP.";
     transport_init(&payload, context->control->cancel);
     payload.transferCancel = context->cancel;
     if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, offer->filename, -1, filename, ARRAYSIZE(filename)) ||

@@ -1,12 +1,12 @@
 #include <windows.h>
-1 RT_MANIFEST "connect95.manifest"
+1 RT_MANIFEST "connectxp.manifest"
 101 ICON "phone.ico"
 102 ICON "send.ico"
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,8,0,0
-PRODUCTVERSION 0,8,0,0
+FILEVERSION 0,9,0,0
+PRODUCTVERSION 0,9,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,9 +14,9 @@ BEGIN
  BEGIN
   BLOCK "040904b0"
   BEGIN
-   VALUE "FileDescription", "Connect95\0"
-   VALUE "ProductName", "Connect95\0"
-   VALUE "FileVersion", "0.8.0\0"
+   VALUE "FileDescription", "ConnectXP\0"
+   VALUE "ProductName", "ConnectXP\0"
+   VALUE "FileVersion", "0.9.0\0"
   END
  END
  BLOCK "VarFileInfo"

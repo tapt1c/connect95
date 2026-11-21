@@ -15,6 +15,7 @@
 static CRITICAL_SECTION guard;
 static HANDLE worker, cancelEvent, confirmEvent;
 static BOOL accepted, ringPending;
+static unsigned int pingsPending;
 static HANDLE transferCancel;
 static WCHAR pendingPath[MAX_PATH];
 static SessionStatus status;
@@ -64,6 +65,7 @@ static void transfer_finished(const WCHAR *error, const WCHAR *success)
 static int process_commands(Connection *connection, Credentials *credentials)
 {
     BOOL ring, sendClipboard, automaticClipboard = FALSE;
+    unsigned int pings, i;
     char clipboard[CLIPBOARD_MAX_BYTES + 1];
     WCHAR path[MAX_PATH];
     TransferContext context = {connection, credentials, &target, transferCancel, transfer_progress};
@@ -75,11 +77,19 @@ static int process_commands(Connection *connection, Credentials *credentials)
         SecureZeroMemory(pendingClipboard, sizeof(pendingClipboard));
         clipboardPending = FALSE;
     }
+    pings = pingsPending;
+    pingsPending = 0;
     ring = ringPending;
     ringPending = FALSE;
     lstrcpyW(path, pendingPath);
     pendingPath[0] = 0;
     LeaveCriticalSection(&guard);
+    for (i = 0; i < pings; ++i) {
+        cJSON *packet = plugin_ping_packet();
+        int result = packet && transport_json(connection, packet, TRUE);
+        cJSON_Delete(packet);
+        if (!result) return 0;
+    }
     if (ring) {
         cJSON *packet = packet_create("kdeconnect.findmyphone.request");
         int result = packet && transport_json(connection, packet, TRUE);
@@ -115,7 +125,7 @@ static void receive_share(Connection *connection, Credentials *credentials, cons
     status.transferPercent = 0;
     ResetEvent(transferCancel);
     LeaveCriticalSection(&guard);
-    transfer_finished(transfer_receive(&context, offer), L"File saved in My Documents\\Connect95.");
+    transfer_finished(transfer_receive(&context, offer), L"File saved in My Documents\\ConnectXP.");
 }
 
 static cJSON *identity_packet(Credentials *credentials)
@@ -132,6 +142,8 @@ static cJSON *identity_packet(Credentials *credentials)
         !(incoming = cJSON_AddArrayToObject(body, "incomingCapabilities")) ||
         !(outgoing = cJSON_AddArrayToObject(body, "outgoingCapabilities")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.share.request")) ||
+        !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.ping")) ||
+        !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.ping")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.notification")) ||
         !cJSON_AddItemToArray(outgoing, cJSON_CreateString("kdeconnect.notification.request")) ||
         !cJSON_AddItemToArray(incoming, cJSON_CreateString("kdeconnect.battery")) ||
@@ -168,6 +180,7 @@ static unsigned __stdcall run_session(void *argument)
     cJSON *packet = NULL;
     char line[PACKET_MAX_SIZE + 1];
     BOOL batteryRequested = FALSE;
+    unsigned int pingSerial = 0;
     size_t used = 0;
     DWORD deadline, partialSince = 0;
     int result, pinned, phase = SESSION_BUSY;
@@ -180,7 +193,7 @@ static unsigned __stdcall run_session(void *argument)
     if (WSAStartup(MAKEWORD(2, 2), &winsock)) goto no_winsock;
     if (psa_crypto_init() != PSA_SUCCESS) goto finish;
     update(SESSION_BUSY, L"Preparing the PC certificate…");
-    failure = L"Cannot load the PC key. Check the user profile and other running copies of Connect95.";
+    failure = L"Cannot load the PC key. Check the user profile and other running copies of ConnectXP.";
     if (!credentials_load(&credentials)) goto finish;
     update(SESSION_BUSY, L"Connecting to the phone…");
     failure = L"Cannot reach the phone over TCP. Refresh discovery on the phone and retry.";
@@ -307,8 +320,22 @@ static unsigned __stdcall run_session(void *argument)
                 SecureZeroMemory(&clipboard, sizeof(clipboard));
             }
             {
-                PhoneNotification notification;
-                if (notification_parse(received, &notification) &&
+                PhoneNotification notification = {0};
+                int parsed = notification_parse(received, &notification);
+                if (!parsed && plugin_ping(received, notification.text, sizeof(notification.text))) {
+                    char sender[1025];
+                    notification.cancelled = FALSE;
+                    notification.silent = FALSE;
+                    notification.eventTime[0] = 0;
+                    ++pingSerial;
+                    snprintf(notification.id, sizeof(notification.id), "connectxp-ping-%u-%u", sessionGeneration, pingSerial);
+                    strcpy(notification.app, "ConnectXP");
+                    if (!WideCharToMultiByte(CP_UTF8, 0, target.name, -1, sender, sizeof(sender), NULL, NULL))
+                        strcpy(sender, "phone");
+                    snprintf(notification.title, sizeof(notification.title), "Ping from %s", sender);
+                    parsed = TRUE;
+                }
+                if (parsed &&
                     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.id, -1, NULL, 0) &&
                     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.app, -1, NULL, 0) &&
                     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, notification.title, -1, NULL, 0) &&
@@ -331,6 +358,7 @@ finish:
     status.transferActive = FALSE;
     notifications.alertCount = 0;
     pendingPath[0] = 0;
+    pingsPending = 0;
     ringPending = FALSE;
     clipboardPending = FALSE;
     status.clipboardSync = FALSE;
@@ -398,7 +426,7 @@ int session_start(const DiscoveryPeer *peer)
         WCHAR name[DEVICE_NAME_MAX + 1];
         device_name_load(name);
         if (!WideCharToMultiByte(CP_UTF8, 0, name, -1, localDeviceName, sizeof(localDeviceName), NULL, NULL))
-            strcpy(localDeviceName, "Connect95");
+            strcpy(localDeviceName, "ConnectXP");
     }
     EnterCriticalSection(&guard);
     notification_store_clear(&notifications);
@@ -548,4 +576,14 @@ int session_notification_alert(PhoneNotification *notification)
     if (status.phase == SESSION_PAIRED) result = notification_store_alert(&notifications, notification);
     LeaveCriticalSection(&guard);
     return result;
+}
+
+int session_ping(void)
+{
+    int ready;
+    EnterCriticalSection(&guard);
+    ready = status.phase == SESSION_PAIRED && pingsPending < 32;
+    if (ready) ++pingsPending;
+    LeaveCriticalSection(&guard);
+    return ready;
 }

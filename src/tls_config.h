@@ -1,5 +1,5 @@
-#ifndef CONNECT95_TLS_CONFIG_H
-#define CONNECT95_TLS_CONFIG_H
+#ifndef CONNECTXP_TLS_CONFIG_H
+#define CONNECTXP_TLS_CONFIG_H
 /* Keep upstream TLS checks. Replace only the OS entropy provider for XP. */
 #define MBEDTLS_NO_PLATFORM_ENTROPY
 #define MBEDTLS_ENTROPY_HARDWARE_ALT

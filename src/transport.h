@@ -1,5 +1,5 @@
-#ifndef CONNECT95_TRANSPORT_H
-#define CONNECT95_TRANSPORT_H
+#ifndef CONNECTXP_TRANSPORT_H
+#define CONNECTXP_TRANSPORT_H
 #include "discovery.h"
 #include "credentials.h"
 #include <mbedtls/ssl.h>

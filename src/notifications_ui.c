@@ -34,7 +34,7 @@ void notifications_balloon_text(const PhoneNotification *notification, WCHAR tit
 {
     int length;
     preview(notification->app, title, 64);
-    if (!title[0]) lstrcpyW(title, L"Connect95");
+    if (!title[0]) lstrcpyW(title, L"ConnectXP");
     preview(notification->title, text, 256);
     length = lstrlenW(text);
     if (length >= 254) return;
@@ -247,16 +247,16 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
         cls.hIcon = (HICON)SendMessageW(owner, WM_GETICON, ICON_SMALL, 0);
         if (!cls.hIcon) cls.hIcon = LoadIconW(NULL, IDI_INFORMATION);
         cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-        cls.lpszClassName = L"Connect95.Notifications";
+        cls.lpszClassName = L"ConnectXP.Notifications";
         if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         notificationFont = font;
         shownRevision = (unsigned int)-1;
         shownGeneration = (unsigned int)-1;
-        notificationWindow = CreateWindowExW(0, cls.lpszClassName, L"Notifications — Connect95",
+        notificationWindow = CreateWindowExW(0, cls.lpszClassName, L"Notifications — ConnectXP",
             WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 660, 470,
             owner, NULL, cls.hInstance, NULL);
         if (!notificationWindow) {
-            MessageBoxW(owner, L"Could not open the notifications window.", L"Connect95", MB_OK | MB_ICONERROR);
+            MessageBoxW(owner, L"Could not open the notifications window.", L"ConnectXP", MB_OK | MB_ICONERROR);
             return;
         }
     }

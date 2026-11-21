@@ -94,6 +94,34 @@ static void test_sharing(void)
     assert(offer("{\"type\":\"kdeconnect.findmyphone.request\",\"body\":{}}", &info) == 0);
 }
 
+static void test_ping(void)
+{
+    cJSON *packet = plugin_ping_packet();
+    cJSON *body;
+    cJSON *parsed;
+    char *encoded;
+    char message[64];
+    assert(packet && plugin_ping(packet, message, sizeof(message)));
+    assert(!strcmp(message, "Ping!"));
+    encoded = cJSON_PrintUnformatted(packet);
+    parsed = packet_parse(encoded, strlen(encoded));
+    assert(parsed && plugin_ping(parsed, message, sizeof(message)));
+    cJSON_Delete(parsed);
+    cJSON_free(encoded);
+    body = cJSON_GetObjectItemCaseSensitive(packet, "body");
+    assert(cJSON_AddStringToObject(body, "message", "Hello \xe2\x98\x83"));
+    assert(plugin_ping(packet, message, sizeof(message)) && !strcmp(message, "Hello \xe2\x98\x83"));
+    assert(!plugin_ping(packet, message, 2));
+    assert(cJSON_ReplaceItemInObjectCaseSensitive(body, "message", cJSON_CreateString("")));
+    assert(plugin_ping(packet, message, sizeof(message)) && !strcmp(message, "Ping!"));
+    assert(cJSON_ReplaceItemInObjectCaseSensitive(body, "message", cJSON_CreateNumber(1)));
+    assert(!plugin_ping(packet, message, sizeof(message)));
+    cJSON_Delete(packet);
+    packet = packet_create("kdeconnect.pair");
+    assert(!plugin_ping(packet, message, sizeof(message)));
+    cJSON_Delete(packet);
+}
+
 static void test_device_plugins(void)
 {
     cJSON *packet, *parsed;
@@ -165,6 +193,7 @@ int main(int argc, char **argv)
     assert(argc == 6);
     test_sharing();
     test_device_plugins();
+    test_ping();
     assert(psa_crypto_init() == PSA_SUCCESS);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&random);
@@ -262,6 +291,6 @@ int main(int argc, char **argv)
     mbedtls_x509_crt_free(&restored);
     mbedtls_ctr_drbg_free(&random);
     mbedtls_entropy_free(&entropy);
-    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair/share/battery/clipboard packets, bidirectional binary payloads");
+    puts("pairing tests passed: TLS 1.2, certificates, verification code, PEM reload, pair/share/battery/clipboard/ping packets, bidirectional binary payloads");
     return 0;
 }

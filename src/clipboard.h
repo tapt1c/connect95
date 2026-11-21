@@ -1,5 +1,5 @@
-#ifndef CONNECT95_CLIPBOARD_H
-#define CONNECT95_CLIPBOARD_H
+#ifndef CONNECTXP_CLIPBOARD_H
+#define CONNECTXP_CLIPBOARD_H
 #include <windows.h>
 #include "device_plugins.h"
 /* 1 success, 0 clipboard busy, -1 unsupported or invalid text. */

@@ -1,5 +1,5 @@
-#ifndef CONNECT95_SHARE_INFO_H
-#define CONNECT95_SHARE_INFO_H
+#ifndef CONNECTXP_SHARE_INFO_H
+#define CONNECTXP_SHARE_INFO_H
 #include "packet.h"
 #include <stdint.h>
 typedef struct {

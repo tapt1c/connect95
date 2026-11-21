@@ -1,5 +1,5 @@
-#ifndef CONNECT95_TRANSFER_H
-#define CONNECT95_TRANSFER_H
+#ifndef CONNECTXP_TRANSFER_H
+#define CONNECTXP_TRANSFER_H
 #include "transport.h"
 #include "share_info.h"
 typedef void (*TransferProgress)(const WCHAR *text, ULONGLONG done, ULONGLONG total);

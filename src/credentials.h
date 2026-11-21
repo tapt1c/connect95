@@ -1,5 +1,5 @@
-#ifndef CONNECT95_CREDENTIALS_H
-#define CONNECT95_CREDENTIALS_H
+#ifndef CONNECTXP_CREDENTIALS_H
+#define CONNECTXP_CREDENTIALS_H
 #include <windows.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>

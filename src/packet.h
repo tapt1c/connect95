@@ -1,5 +1,5 @@
-#ifndef CONNECT95_PACKET_H
-#define CONNECT95_PACKET_H
+#ifndef CONNECTXP_PACKET_H
+#define CONNECTXP_PACKET_H
 #include <stddef.h>
 #define PACKET_MAX_SIZE 65536
 #include "vendor/cJSON.h"

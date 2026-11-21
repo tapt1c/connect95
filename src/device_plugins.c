@@ -56,3 +56,25 @@ cJSON *plugin_clipboard_packet(const char *content)
     }
     return packet;
 }
+
+int plugin_ping(const cJSON *packet, char *message, size_t capacity)
+{
+    const cJSON *type = cJSON_GetObjectItemCaseSensitive(packet, "type");
+    const cJSON *body = cJSON_GetObjectItemCaseSensitive(packet, "body");
+    const cJSON *value;
+    const char *text = "Ping!";
+    if (!cJSON_IsString(type) || strcmp(type->valuestring, "kdeconnect.ping") || !cJSON_IsObject(body)) return 0;
+    value = cJSON_GetObjectItemCaseSensitive(body, "message");
+    if (value) {
+        if (!cJSON_IsString(value)) return 0;
+        if (value->valuestring[0]) text = value->valuestring;
+    }
+    if (strlen(text) >= capacity) return 0;
+    strcpy(message, text);
+    return 1;
+}
+
+cJSON *plugin_ping_packet(void)
+{
+    return packet_create("kdeconnect.ping");
+}

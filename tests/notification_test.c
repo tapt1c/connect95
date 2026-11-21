@@ -66,6 +66,18 @@ int main(void)
     assert(notification_store_apply(store, message) == 1);
     assert(notification_store_alert(store, alert) && !strcmp(alert->id, "id-3"));
     notification_store_clear(store);
+    memset(message, 0, sizeof(*message));
+    strcpy(message->app, "ConnectXP");
+    strcpy(message->title, "Ping from phone");
+    strcpy(message->text, "Ping!");
+    strcpy(message->id, "connectxp-ping-1-1");
+    assert(notification_store_apply(store, message));
+    strcpy(message->id, "connectxp-ping-1-2");
+    assert(notification_store_apply(store, message));
+    assert(store->count == 2 && store->alertCount == 2);
+    assert(notification_store_alert(store, alert) && !strcmp(alert->id, "connectxp-ping-1-1"));
+    assert(notification_store_alert(store, alert) && !strcmp(alert->id, "connectxp-ping-1-2"));
+    notification_store_clear(store);
     assert(!store->count && !store->alertCount);
     free(message);
     free(alert);

@@ -1,5 +1,5 @@
-#ifndef CONNECT95_SESSION_H
-#define CONNECT95_SESSION_H
+#ifndef CONNECTXP_SESSION_H
+#define CONNECTXP_SESSION_H
 #include "discovery.h"
 #include "device_plugins.h"
 #include "notifications.h"
@@ -29,6 +29,7 @@ void session_stop(void);
 int session_forget(const DiscoveryPeer *peer);
 void session_free(void);
 int session_ring(void);
+int session_ping(void);
 int session_send_file(const WCHAR *path);
 void session_cancel_transfer(void);
 int session_send_clipboard(const char *content, BOOL automatic);

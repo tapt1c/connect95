@@ -1,5 +1,5 @@
-#ifndef CONNECT95_PAIRING_H
-#define CONNECT95_PAIRING_H
+#ifndef CONNECTXP_PAIRING_H
+#define CONNECTXP_PAIRING_H
 #include <stddef.h>
 #include <mbedtls/x509_crt.h>
 int pairing_verify_peer(const mbedtls_x509_crt *certificate, const char *id, unsigned int flags);
