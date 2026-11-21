@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "theme.h"
 #include "sidebar_layout.h"
+#include "ui_layout.h"
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
@@ -50,11 +51,10 @@
 #define ID_GROUP_FILES 271
 #define ID_GROUP_OTHER 272
 #define MAX_PEERS 64
-#define DEVICE_PANE_WIDTH 220
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton, pairButton;
-static HWND clipboardButton, transferBox, transferText, progress, statusBar, cancelTransferButton;
+static HWND clipboardButton, transferText, progress, statusBar, cancelTransferButton;
 static HFONT normalFont, titleFont, groupFont, linkFont;
 static HICON icons[4];
 static HICON taskIcons[3];
@@ -71,7 +71,8 @@ static HTREEITEM savedGroup, discoveredGroup, peerNodes[MAX_PEERS];
 static BOOL peerSaved[MAX_PEERS], peerSeen[MAX_PEERS], peerConnected[MAX_PEERS];
 static HIMAGELIST deviceImages;
 static HWND sideSend, sideFolder, sideHistory, sideRing, sideNotifications, sideClipboard;
-static HWND recentBox, recentText;
+static HWND recentText;
+static MainLayout currentLayout;
 static BOOL autoPaused, startInTray, batteryAdded, lowBatteryWarned;
 static DWORD lastAutoAttempt;
 static int autoCursor;
@@ -507,7 +508,7 @@ static void recentNotifications(void)
     NotificationSummary rows[2];
     WCHAR text[768] = L"", app[97], title[257];
     unsigned int revision;
-    int count = session_notification_list(rows, 2, &revision), i;
+    int count = session_notification_list(rows, currentLayout.compact ? 1 : 2, &revision), i;
     for (i = 0; i < count; ++i) {
         if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, rows[i].app, -1, app, ARRAYSIZE(app))) lstrcpyW(app, L"KDE Connect");
         if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, rows[i].title, -1, title, ARRAYSIZE(title))) title[0] = 0;
@@ -637,7 +638,7 @@ static LRESULT CALLBACK taskLinkProc(HWND window, UINT message, WPARAM wParam, L
 static HWND control(HWND parent, const WCHAR *kind, const WCHAR *text,
                     DWORD style, int id)
 {
-    HWND child = CreateWindowExW(0, kind, text, WS_CHILD | WS_VISIBLE | style,
+    HWND child = CreateWindowExW(0, kind, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style,
                                  0, 0, 0, 0, parent, (HMENU)(INT_PTR)id,
                                  instance, NULL);
     if (child) SendMessageW(child, WM_SETFONT, (WPARAM)normalFont, TRUE);
@@ -710,12 +711,10 @@ static void updateLanguage(HWND window)
     setControlText(sideRing, tr(L"Find phone"));
     setControlText(sideNotifications, tr(L"Notifications…"));
     setControlText(sideClipboard, tr(L"Clipboard"));
-    setControlText(recentBox, tr(L"Recent notifications"));
     setControlText(pairButton, tr(L"Pair / connect"));
     setControlText(sendButton, tr(L"Send file"));
     setControlText(ringButton, tr(L"Find phone"));
     setControlText(clipboardButton, tr(L"Clipboard"));
-    setControlText(transferBox, tr(L"File transfers"));
     setControlText(cancelTransferButton, tr(L"Cancel"));
     ZeroMemory(&item, sizeof(item));
     item.mask = TVIF_TEXT;
@@ -773,52 +772,73 @@ static void trayMenu(HWND window)
 static void layout(HWND window)
 {
     RECT area, statusArea;
-    int width, height, left, rightX, rightWidth, buttonWidth, buttonY;
+    UiPlacement positions[24];
+    HWND links[] = {sideSend, sideFolder, sideHistory, sideRing, sideNotifications, sideClipboard};
+    HWND actions[] = {sendButton, ringButton, clipboardButton};
+    int count = 0, i, closed = groupCollapsed[0] | (groupCollapsed[1] << 1) | (groupCollapsed[2] << 2);
     GetClientRect(window, &area);
     SendMessageW(statusBar, WM_SIZE, 0, 0);
     GetWindowRect(statusBar, &statusArea);
-    width = area.right;
-    height = area.bottom - (statusArea.bottom - statusArea.top);
-    left = DEVICE_PANE_WIDTH;
-    rightX = left + 20;
-    rightWidth = width - rightX - 10;
-    buttonWidth = (rightWidth - 12) / 3;
-    buttonY = 128;
-    SidebarLayout sidebar = sidebar_layout(height, groupCollapsed[0], groupCollapsed[1], groupCollapsed[2]);
-    MoveWindow(groupHeaders[0], 12, sidebar.devicesTop, left - 24, 26, TRUE);
-    MoveWindow(groupHeaders[1], 12, sidebar.filesTop, left - 24, 26, TRUE);
-    MoveWindow(groupHeaders[2], 12, sidebar.otherTop, left - 24, 26, TRUE);
-    ShowWindow(devices, groupCollapsed[0] ? SW_HIDE : SW_SHOWNA);
-    if (!groupCollapsed[0]) MoveWindow(devices, 14, sidebar.devicesTop + 28, left - 28, sidebar.devicesBody - 4, TRUE);
-    MoveWindow(heading, rightX + 56, 20, rightWidth - 56, 28, TRUE);
-    /* Keep the two-line status above the battery and pairing row. STATIC
-       background erasure can overwrite a sibling if these rectangles overlap. */
-    MoveWindow(state, rightX + 56, 52, rightWidth - 56, 34, TRUE);
-    MoveWindow(battery, rightX + 56, 90, rightWidth - 250, 21, TRUE);
-    MoveWindow(pairButton, rightX + rightWidth - 180, 86, 180, 26, TRUE);
-    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 48, TRUE);
-    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 48, TRUE);
-    MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
-               buttonY, rightWidth - (buttonWidth + 6) * 2, 48, TRUE);
-    MoveWindow(transferBox, rightX, 196, rightWidth, 128, TRUE);
-    MoveWindow(transferText, rightX + 12, 220, rightWidth - 110, 40, TRUE);
-    MoveWindow(cancelTransferButton, rightX + rightWidth - 88, 220, 76, 26, TRUE);
-    MoveWindow(progress, rightX + 12, 282, rightWidth - 24, 18, TRUE);
-    ShowWindow(sideSend, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideSend, 22, sidebar.filesTop + 34, left - 44, 22, TRUE);
-    ShowWindow(sideFolder, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideFolder, 22, sidebar.filesTop + 62, left - 44, 22, TRUE);
-    ShowWindow(sideHistory, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideHistory, 22, sidebar.filesTop + 90, left - 44, 22, TRUE);
-    ShowWindow(sideRing, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideRing, 22, sidebar.otherTop + 34, left - 44, 22, TRUE);
-    ShowWindow(sideNotifications, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideNotifications, 22, sidebar.otherTop + 62, left - 44, 22, TRUE);
-    ShowWindow(sideClipboard, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
-    MoveWindow(sideClipboard, 22, sidebar.otherTop + 90, left - 44, 22, TRUE);
-    MoveWindow(recentBox, rightX, 340, rightWidth, height - 352, TRUE);
-    MoveWindow(recentText, rightX + 12, 364, rightWidth - 24, height - 388, TRUE);
-    RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    currentLayout = main_layout(area.right, area.bottom - (statusArea.bottom - statusArea.top), closed);
+#define PLACE(handle, rectangle, show) positions[count++] = (UiPlacement){handle, rectangle, show}
+    for (i = 0; i < 3; ++i) PLACE(groupHeaders[i], currentLayout.headers[i], 1);
+    PLACE(devices, currentLayout.tree, !groupCollapsed[0]);
+    PLACE(heading, currentLayout.heading, 1);
+    PLACE(state, currentLayout.state, 1);
+    PLACE(battery, currentLayout.battery, 1);
+    PLACE(pairButton, currentLayout.pair, 1);
+    for (i = 0; i < 3; ++i) PLACE(actions[i], currentLayout.actions[i], 1);
+    PLACE(transferText, currentLayout.transferText, 1);
+    PLACE(cancelTransferButton, currentLayout.cancel, 1);
+    PLACE(progress, currentLayout.progress, 1);
+    for (i = 0; i < 6; ++i) PLACE(links[i], currentLayout.links[i], !groupCollapsed[i < 3 ? 1 : 2]);
+    PLACE(recentText, currentLayout.recentText, 1);
+#undef PLACE
+    ui_apply_layout(window, positions, count);
+}
+
+static void drawSection(HDC dc, UiRect position, const WCHAR *caption)
+{
+    RECT border = {position.x, position.y + 7, position.x + position.w, position.y + position.h};
+    RECT text = {position.x + 8, position.y, position.x + position.w - 8, position.y + 20};
+    RECT measured = text;
+    DrawEdge(dc, &border, EDGE_ETCHED, BF_RECT);
+    DrawTextW(dc, caption, -1, &measured, DT_CALCRECT | DT_SINGLELINE);
+    measured.right += 8;
+    FillRect(dc, &measured, GetSysColorBrush(COLOR_WINDOW));
+    text.left += 4;
+    SetTextColor(dc, theme_link_color());
+    DrawTextW(dc, caption, -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void paintWorkspace(HDC dc, const RECT *client)
+{
+    RECT panel;
+    SidebarLayout *sidebar = &currentLayout.sidebar;
+    HGDIOBJ font = SelectObject(dc, normalFont);
+    FillRect(dc, client, GetSysColorBrush(COLOR_WINDOW));
+    SetBkMode(dc, TRANSPARENT);
+    SetRect(&panel, 0, 0, currentLayout.paneWidth, currentLayout.contentHeight);
+    theme_sidebar(dc, &panel);
+    if (!groupCollapsed[0]) {
+        SetRect(&panel, 12, sidebar->devicesTop + sidebar->headerHeight,
+            currentLayout.paneWidth - 12, sidebar->devicesTop + sidebar->headerHeight + sidebar->devicesBody);
+        theme_panel(dc, &panel, FALSE);
+    }
+    if (!groupCollapsed[1]) {
+        SetRect(&panel, 12, sidebar->filesTop + sidebar->headerHeight,
+            currentLayout.paneWidth - 12, sidebar->filesTop + sidebar->headerHeight + sidebar->filesBody);
+        theme_panel(dc, &panel, FALSE);
+    }
+    if (!groupCollapsed[2]) {
+        SetRect(&panel, 12, sidebar->otherTop + sidebar->headerHeight,
+            currentLayout.paneWidth - 12, sidebar->otherTop + sidebar->headerHeight + sidebar->otherBody);
+        theme_panel(dc, &panel, FALSE);
+    }
+    drawSection(dc, currentLayout.transferFrame, tr(L"File transfers"));
+    drawSection(dc, currentLayout.recentFrame, tr(L"Recent notifications"));
+    DrawIconEx(dc, currentLayout.icon.x, currentLayout.icon.y, icons[0], 32, 32, 0, NULL, DI_NORMAL);
+    SelectObject(dc, font);
 }
 
 static void drawButton(const DRAWITEMSTRUCT *item)
@@ -841,7 +861,7 @@ static void drawButton(const DRAWITEMSTRUCT *item)
         GetClientRect(GetParent(item->hwndItem), &parent);
         GetWindowRect(statusBar, &status);
         MapWindowPoints(item->hwndItem, GetParent(item->hwndItem), &origin, 1);
-        SetRect(&pane, 0, 0, DEVICE_PANE_WIDTH, parent.bottom - (status.bottom - status.top));
+        SetRect(&pane, 0, 0, currentLayout.paneWidth, parent.bottom - (status.bottom - status.top));
         SaveDC(item->hDC);
         OffsetViewportOrgEx(item->hDC, -origin.x, -origin.y, NULL);
         theme_sidebar(item->hDC, &pane);
@@ -853,9 +873,9 @@ static void drawButton(const DRAWITEMSTRUCT *item)
     if (side) theme_link_background(item->hDC, &rect);
     else theme_button(item->hDC, &rect, (item->itemState & ODS_SELECTED) != 0, disabled, (item->itemState & ODS_FOCUS) != 0);
     if (iconIndex >= 1 && iconIndex <= 3) {
-        int size = side ? 16 : 32;
+        int size = side || currentLayout.compact ? 16 : 32;
         DrawIconEx(item->hDC, side ? 2 : 9, (rect.bottom - size) / 2,
-            side ? taskIcons[iconIndex - 1] : icons[iconIndex], size, size, 0, NULL, DI_NORMAL);
+            side || currentLayout.compact ? taskIcons[iconIndex - 1] : icons[iconIndex], size, size, 0, NULL, DI_NORMAL);
     }
     GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
     SetBkMode(item->hDC, TRANSPARENT);
@@ -867,7 +887,7 @@ static void drawButton(const DRAWITEMSTRUCT *item)
         GetWindowRect(item->hwndItem, &screen);
         previous = SelectObject(item->hDC, side && !disabled && PtInRect(&screen, cursor) ? linkFont : normalFont);
     }
-    textRect.left += side ? 26 : 49;
+    textRect.left += side ? 26 : currentLayout.compact ? 30 : 49;
     textRect.right -= 4;
     DrawTextW(item->hDC, label, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item->hDC, previous);
@@ -944,7 +964,7 @@ static BOOL createControls(HWND window)
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     titleFont = CreateFontIndirectW(&metrics.lfMessageFont);
     devices = CreateWindowExW(0, WC_TREEVIEWW, L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, window, NULL, instance, NULL);
     SendMessageW(devices, WM_SETFONT, (WPARAM)normalFont, TRUE);
     groupHeaders[0] = control(window, L"BUTTON", tr(L"Devices"), BS_OWNERDRAW | WS_TABSTOP, ID_GROUP_DEVICES);
@@ -956,9 +976,8 @@ static BOOL createControls(HWND window)
     sideRing = control(window, L"BUTTON", tr(L"Find phone"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_RING);
     sideNotifications = control(window, L"BUTTON", tr(L"Notifications…"), BS_OWNERDRAW | WS_TABSTOP, ID_NOTIFICATIONS);
     sideClipboard = control(window, L"BUTTON", tr(L"Clipboard"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_CLIPBOARD);
-    recentBox = control(window, L"BUTTON", tr(L"Recent notifications"), BS_GROUPBOX, 0);
     recentText = control(window, L"STATIC", tr(L"No notifications yet"), SS_LEFT, 0);
-    heading = control(window, L"STATIC", L"ConnectXP", SS_LEFT, 0);
+    heading = control(window, L"STATIC", L"ConnectXP", SS_LEFT | SS_ENDELLIPSIS, 0);
     SendMessageW(heading, WM_SETFONT, (WPARAM)titleFont, TRUE);
     state = control(window, L"STATIC", tr(L"No connected devices"), SS_LEFT, 0);
     battery = control(window, L"STATIC", tr(L"Battery —"), SS_LEFT, 0);
@@ -966,7 +985,6 @@ static BOOL createControls(HWND window)
     sendButton = control(window, L"BUTTON", tr(L"Send file"), BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_SEND);
     ringButton = control(window, L"BUTTON", tr(L"Find phone"), BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_RING);
     clipboardButton = control(window, L"BUTTON", tr(L"Clipboard"), BS_OWNERDRAW | WS_TABSTOP | WS_DISABLED, ID_CLIPBOARD);
-    transferBox = control(window, L"BUTTON", tr(L"File transfers"), BS_GROUPBOX, 0);
     transferText = control(window, L"STATIC", tr(L"No active transfers"), SS_LEFT, 0);
     cancelTransferButton = control(window, L"BUTTON", tr(L"Cancel"), BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_CANCEL_TRANSFER);
     progress = control(window, PROGRESS_CLASSW, L"", 0, 0);
@@ -974,8 +992,8 @@ static BOOL createControls(HWND window)
     setStatusText(tr(L"  Ready."));
     if (devices && !initializeDeviceTree()) return FALSE;
     return normalFont && titleFont && groupFont && linkFont && groupHeaders[0] && groupHeaders[1] && groupHeaders[2] && sideSend && sideFolder && sideHistory && sideRing &&
-        sideNotifications && sideClipboard && recentBox && recentText && devices && heading && state && battery &&
-        pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
+        sideNotifications && sideClipboard && recentText && devices && heading && state && battery &&
+        pairButton && sendButton && ringButton && clipboardButton && transferText &&
         cancelTransferButton && progress && statusBar;
 }
 
@@ -1005,8 +1023,11 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         else layout(window);
         return 0;
     case WM_GETMINMAXINFO:
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 800;
-        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 520;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 640;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 480;
+        return 0;
+    case WM_EXITSIZEMOVE:
+        layout(window);
         return 0;
     case WM_DRAWITEM:
         drawButton((const DRAWITEMSTRUCT *)lParam);
@@ -1028,45 +1049,28 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
         SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
         return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+    case WM_ERASEBKGND:
+        /* WM_PAINT paints the complete background through a memory DC. */
+        return 1;
     case WM_PAINT: {
         PAINTSTRUCT paint;
-        HDC dc = BeginPaint(window, &paint);
-        RECT client, panel, statusRect;
-        HWND child;
-        int height;
-        HGDIOBJ oldFont = SelectObject(dc, normalFont);
+        HDC target = BeginPaint(window, &paint), memory;
+        HBITMAP bitmap;
+        HGDIOBJ previous = NULL;
+        RECT client;
         GetClientRect(window, &client);
-        GetWindowRect(statusBar, &statusRect);
-        height = client.bottom - (statusRect.bottom - statusRect.top);
-        SaveDC(dc);
-        /* Painting the task pane must never paint over its child controls. */
-        for (child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
-            RECT occupied;
-            if (!IsWindowVisible(child)) continue;
-            GetWindowRect(child, &occupied);
-            MapWindowPoints(NULL, window, (POINT *)&occupied, 2);
-            ExcludeClipRect(dc, occupied.left, occupied.top, occupied.right, occupied.bottom);
+        memory = CreateCompatibleDC(target);
+        bitmap = memory ? CreateCompatibleBitmap(target, client.right > 0 ? client.right : 1, client.bottom > 0 ? client.bottom : 1) : NULL;
+        if (bitmap) previous = SelectObject(memory, bitmap);
+        else { if (memory) DeleteDC(memory); memory = target; }
+        paintWorkspace(memory, &client);
+        if (bitmap) {
+            /* The destination DC excludes children via WS_CLIPCHILDREN. */
+            BitBlt(target, paint.rcPaint.left, paint.rcPaint.top,
+                paint.rcPaint.right - paint.rcPaint.left, paint.rcPaint.bottom - paint.rcPaint.top,
+                memory, paint.rcPaint.left, paint.rcPaint.top, SRCCOPY);
+            SelectObject(memory, previous); DeleteObject(bitmap); DeleteDC(memory);
         }
-        SetRect(&panel, 0, 0, DEVICE_PANE_WIDTH, height);
-        theme_sidebar(dc, &panel);
-        {
-            SidebarLayout sidebar = sidebar_layout(height, groupCollapsed[0], groupCollapsed[1], groupCollapsed[2]);
-            if (!groupCollapsed[0]) {
-                SetRect(&panel, 12, sidebar.devicesTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.devicesTop + 26 + sidebar.devicesBody);
-                theme_panel(dc, &panel, FALSE);
-            }
-            if (!groupCollapsed[1]) {
-                SetRect(&panel, 12, sidebar.filesTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.filesTop + 26 + sidebar.filesBody);
-                theme_panel(dc, &panel, FALSE);
-            }
-            if (!groupCollapsed[2]) {
-                SetRect(&panel, 12, sidebar.otherTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.otherTop + 26 + sidebar.otherBody);
-                theme_panel(dc, &panel, FALSE);
-            }
-        }
-        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 24, icons[0], 32, 32, 0, NULL, DI_NORMAL);
-        RestoreDC(dc, -1);
-        SelectObject(dc, oldFont);
         EndPaint(window, &paint);
         return 0;
     }
@@ -1242,6 +1246,10 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     WNDCLASSEXW cls;
     INITCOMMONCONTROLSEX common;
     HWND window;
+    RECT work;
+    MONITORINFO monitor;
+    POINT cursor;
+    WindowPlacement initial;
     HANDLE singleton;
     MSG message;
     HACCEL shortcuts;
@@ -1284,8 +1292,14 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
     cls.lpszClassName = L"ConnectXP.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
-    window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 880, 560, NULL, createMenu(), instance, NULL);
+    SetRect(&work, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+    GetCursorPos(&cursor);
+    ZeroMemory(&monitor, sizeof(monitor)); monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &monitor)) work = monitor.rcWork;
+    else SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    initial = initial_window(work.left, work.top, work.right - work.left, work.bottom - work.top);
+    window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+        initial.x, initial.y, initial.w, initial.h, NULL, createMenu(), instance, NULL);
     if (!window) {
         MessageBoxW(NULL, tr(L"Could not create the ConnectXP window."), L"ConnectXP", MB_ICONERROR);
         return 1;

@@ -1,5 +1,6 @@
 #include "notifications_ui.h"
 #include "language.h"
+#include "ui_layout.h"
 #include <commctrl.h>
 #include <string.h>
 
@@ -185,12 +186,14 @@ static void layout(HWND window)
 {
     RECT area;
     int listHeight;
+    UiPlacement items[3];
     GetClientRect(window, &area);
     listHeight = area.bottom / 3;
     if (listHeight < 100) listHeight = 100;
-    MoveWindow(notificationStatus, 10, 10, area.right - 20, 20, TRUE);
-    MoveWindow(notificationList, 10, 36, area.right - 20, listHeight, TRUE);
-    MoveWindow(notificationDetail, 10, listHeight + 46, area.right - 20, area.bottom - listHeight - 56, TRUE);
+    items[0] = (UiPlacement){notificationStatus, {10, 10, area.right - 20, 20}, 1};
+    items[1] = (UiPlacement){notificationList, {10, 36, area.right - 20, listHeight}, 1};
+    items[2] = (UiPlacement){notificationDetail, {10, listHeight + 46, area.right - 20, area.bottom - listHeight - 56}, 1};
+    ui_apply_layout(window, items, 3);
     ListView_SetColumnWidth(notificationList, 0, 150);
     ListView_SetColumnWidth(notificationList, 1, area.right - 195);
 }
@@ -258,6 +261,7 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
     if (id) lstrcpynA(wantedId, id, ARRAYSIZE(wantedId));
     if (!notificationWindow) {
         WNDCLASSW cls;
+        WindowPlacement placement = ui_window_placement(owner, 660, 470);
         ZeroMemory(&cls, sizeof(cls));
         cls.hInstance = GetModuleHandleW(NULL);
         cls.lpfnWndProc = notificationProc;
@@ -273,7 +277,7 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
         shownRevision = (unsigned int)-1;
         shownGeneration = (unsigned int)-1;
         notificationWindow = CreateWindowExW(0, cls.lpszClassName, tr(L"Notifications — ConnectXP"),
-            WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 660, 470,
+            (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX) | WS_CLIPCHILDREN, placement.x, placement.y, placement.w, placement.h,
             owner, NULL, cls.hInstance, NULL);
         if (!notificationWindow) {
             MessageBoxW(owner, tr(L"Could not open the notifications window."), L"ConnectXP", MB_OK | MB_ICONERROR);

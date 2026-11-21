@@ -2,6 +2,7 @@
 #include "transfer.h"
 #include "language.h"
 #include "sidebar_layout.h"
+#include "ui_layout.h"
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
@@ -258,14 +259,16 @@ static void history_layout(HWND window)
 {
     RECT area;
     int width, height, available;
+    UiPlacement items[5];
     GetClientRect(window, &area);
     width = area.right; height = area.bottom;
     available = width - 24;
-    MoveWindow(historyHint, 12, 12, available, 20, TRUE);
-    MoveWindow(historyList, 12, 40, available, height - 148, TRUE);
-    MoveWindow(historyDetail, 12, height - 96, available, 52, TRUE);
-    MoveWindow(historyFolder, 12, height - 32, 140, 24, TRUE);
-    MoveWindow(historyClose, width - 102, height - 32, 90, 24, TRUE);
+    items[0] = (UiPlacement){historyHint, {12, 12, available, 20}, 1};
+    items[1] = (UiPlacement){historyList, {12, 40, available, height - 148}, 1};
+    items[2] = (UiPlacement){historyDetail, {12, height - 96, available, 52}, 1};
+    items[3] = (UiPlacement){historyFolder, {12, height - 32, 140, 24}, 1};
+    items[4] = (UiPlacement){historyClose, {width - 102, height - 32, 90, 24}, 1};
+    ui_apply_layout(window, items, 5);
     ListView_SetColumnWidth(historyList, 0, available * 34 / 100);
     ListView_SetColumnWidth(historyList, 1, available * 16 / 100);
     ListView_SetColumnWidth(historyList, 2, 128);
@@ -329,21 +332,22 @@ static void transfer_layout(BOOL busy)
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     int buttonY = layout.buttonTop;
     BOOL animated = busy && animationAvailable;
+    UiPlacement items[6];
     GetClientRect(dialog, &client);
     if (lastLayoutMode == (int)busy && client.bottom == outer.bottom) return;
     lastLayoutMode = busy;
-    MoveWindow(nameLabel, 20, 16, animated ? 340 : 500, 34, TRUE);
-    MoveWindow(detailLabel, 20, 60, 500, 56, TRUE);
-    MoveWindow(meter, 20, 126, 500, 18, TRUE);
-    MoveWindow(folderButton, 20, buttonY, 140, 26, TRUE);
-    MoveWindow(cancelButton, 380, buttonY, 140, 26, TRUE);
-    ShowWindow(meter, layout.showProgress ? SW_SHOWNA : SW_HIDE);
-    ShowWindow(animation, animated ? SW_SHOWNA : SW_HIDE);
     GetClientRect(dialog, &client);
     if (client.bottom != outer.bottom && !IsIconic(dialog)) {
         AdjustWindowRectEx(&outer, style, FALSE, WS_EX_CONTROLPARENT);
         SetWindowPos(dialog, NULL, 0, 0, outer.right - outer.left, outer.bottom - outer.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    items[0] = (UiPlacement){nameLabel, {20, 16, animated ? 340 : 500, 34}, 1};
+    items[1] = (UiPlacement){detailLabel, {20, 60, 500, 56}, 1};
+    items[2] = (UiPlacement){meter, {20, 126, 500, 18}, layout.showProgress};
+    items[3] = (UiPlacement){folderButton, {20, buttonY, 140, 26}, 1};
+    items[4] = (UiPlacement){cancelButton, {380, buttonY, 140, 26}, 1};
+    items[5] = (UiPlacement){animation, {380, 4, 140, 50}, animated};
+    ui_apply_layout(dialog, items, 6);
 }
 
 static LRESULT CALLBACK transfer_proc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -407,9 +411,10 @@ void jobs_show(HWND owner, HFONT font)
 {
     dialogFont = font;
     if (!historyDialog) {
+        WindowPlacement placement = ui_window_placement(owner, 800, 420);
         if (!register_jobs_class(owner, L"ConnectXP.TransferHistory", history_proc)) return;
         historyDialog = CreateWindowExW(WS_EX_CONTROLPARENT, L"ConnectXP.TransferHistory", tr(L"Transfer history — ConnectXP"),
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 420, owner, NULL, GetModuleHandleW(NULL), NULL);
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, placement.x, placement.y, placement.w, placement.h, owner, NULL, GetModuleHandleW(NULL), NULL);
     }
     if (historyDialog) { ShowWindow(historyDialog, SW_RESTORE); SetForegroundWindow(historyDialog); }
 }
@@ -418,12 +423,14 @@ static void show_transfer(HWND owner, HFONT font)
 {
     if (!dialog) {
         RECT outer = {0, 0, 540, 206};
-        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+        WindowPlacement placement;
         if (!register_jobs_class(owner, L"ConnectXP.FileTransfer", transfer_proc)) return;
         dialogFont = font;
         AdjustWindowRectEx(&outer, style, FALSE, WS_EX_CONTROLPARENT);
+        placement = ui_window_placement(owner, outer.right - outer.left, outer.bottom - outer.top);
         dialog = CreateWindowExW(WS_EX_CONTROLPARENT, L"ConnectXP.FileTransfer", tr(L"File transfer — ConnectXP"),
-            style, CW_USEDEFAULT, CW_USEDEFAULT, outer.right - outer.left, outer.bottom - outer.top, owner, NULL, GetModuleHandleW(NULL), NULL);
+            style, placement.x, placement.y, placement.w, placement.h, owner, NULL, GetModuleHandleW(NULL), NULL);
     }
     if (dialog) ShowWindow(dialog, SW_SHOWNOACTIVATE);
 }

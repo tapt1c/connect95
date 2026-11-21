@@ -1,19 +1,27 @@
 #ifndef CONNECTXP_SIDEBAR_LAYOUT_H
 #define CONNECTXP_SIDEBAR_LAYOUT_H
 /* Logical client pixels. Extra space stays below the groups, as in Explorer. */
-typedef struct { int devicesTop, devicesBody, filesTop, filesBody, otherTop, otherBody; } SidebarLayout;
+typedef struct {
+    int devicesTop, devicesBody, filesTop, filesBody, otherTop, otherBody;
+    int headerHeight, linkStep, linkHeight;
+} SidebarLayout;
 static inline SidebarLayout sidebar_layout(int height, int devicesClosed, int filesClosed, int otherClosed)
 {
     SidebarLayout layout;
-    int tree = height - 332;
+    int compact = height < 440;
+    int gap = compact ? 12 : 16, body = compact ? 84 : 96;
+    int tree = height - (compact ? 288 : 332);
     if (tree > 150) tree = 150;
     if (tree < 64) tree = 64;
-    layout.devicesTop = 16;
+    layout.headerHeight = compact ? 24 : 26;
+    layout.linkStep = compact ? 24 : 28;
+    layout.linkHeight = compact ? 20 : 22;
+    layout.devicesTop = compact ? 12 : 16;
     layout.devicesBody = devicesClosed ? 0 : tree;
-    layout.filesTop = layout.devicesTop + 26 + layout.devicesBody + 16;
-    layout.filesBody = filesClosed ? 0 : 96;
-    layout.otherTop = layout.filesTop + 26 + layout.filesBody + 16;
-    layout.otherBody = otherClosed ? 0 : 96;
+    layout.filesTop = layout.devicesTop + layout.headerHeight + layout.devicesBody + gap;
+    layout.filesBody = filesClosed ? 0 : body;
+    layout.otherTop = layout.filesTop + layout.headerHeight + layout.filesBody + gap;
+    layout.otherBody = otherClosed ? 0 : body;
     return layout;
 }
 typedef struct { int clientHeight, buttonTop, showProgress; } TransferWindowLayout;

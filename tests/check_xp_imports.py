@@ -7,7 +7,7 @@ objdump, executable = sys.argv[1:]
 output = subprocess.check_output([objdump, '-p', executable], text=True)
 dlls = {name.lower() for name in re.findall(r'DLL Name: (\S+)', output)}
 allowed = {'ADVAPI32.dll', 'COMDLG32.dll', 'COMCTL32.dll', 'CRYPT32.dll', 'GDI32.dll',
-           'KERNEL32.dll', 'msvcrt.dll', 'SHELL32.dll', 'USER32.dll', 'WS2_32.dll'}
+           'KERNEL32.dll', 'MSIMG32.dll', 'msvcrt.dll', 'SHELL32.dll', 'USER32.dll', 'WS2_32.dll'}
 allowed = {name.lower() for name in allowed}
 assert dlls <= allowed, f'Unexpected dependencies: {dlls - allowed}'
 for function in ('_vsnprintf_s', 'BCryptGenRandom', 'GetTickCount64',

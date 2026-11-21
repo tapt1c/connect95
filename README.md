@@ -2,12 +2,38 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.1 introduces an Explorer-style task pane, compact themed action buttons,
-a resizable and maximizable main window (880×560 initially, minimum 800×520),
+Version 0.11.2 introduces an Explorer-style task pane, compact themed action buttons,
+a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
 links with a hand cursor and underlined hover text. The sidebar background and
-link colors are read from the ExplorerBar theme, with flat system-color fallbacks. English and Russian interfaces
+link colors follow the active theme, with flat system-color fallbacks.
+
+## Small screens, resizing and XP shell styles
+
+Initial window sizes are clamped and centered within the current monitor's work
+area, including the taskbar. On an 800×600 desktop the main window fits without
+opening outside the screen. At narrower or shorter client sizes, a compact layout
+uses a 190-pixel task pane, smaller action icons, shorter transfer panels and a
+single recent-notification preview. All actions remain available. History,
+notifications and transfer popups also start within the work area.
+
+Main-window section frames are background decorations rather than overlapping
+child group-box windows. Foreground controls move in one deferred batch before
+one invalidation. The parent clips child areas and paints its background through
+a memory DC, preventing resizing from erasing or copying over buttons and text.
+History and notification windows also batch their layout updates.
+
+On XP, Explorer task panes can be defined in the active theme's
+`Shell\<ColorScheme>\shellstyle.dll`, independently of the ExplorerBar msstyles
+parts. ConnectXP reads resource 1 of type UIFILE from that installed DLL as data
+and recognizes common `sectionss`, `sectiontaskss` and `taskpane` RGB/bitmap
+settings, including background, header and arrow bitmaps. This handles the
+supplied Luna Element style's teal background, light headers and black links.
+Unsupported shell-style declarations fall back to UxTheme/system colors.
+Themes are reloaded on theme/color changes. No uploaded theme files or artwork
+are bundled or installed by ConnectXP. The Luna Element archive was inspected
+as resource data; its theme was not installed or executed in this environment. English and Russian interfaces
 are available. Buttons and task groups use the installed Windows theme, with
 system-color fallbacks for classic Windows and unavailable theme resources.
 Theme and system-color changes are applied while the program is running.
@@ -256,7 +282,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.1 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.2 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -319,7 +345,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.1 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.2 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,
