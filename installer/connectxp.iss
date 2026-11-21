@@ -155,6 +155,8 @@ begin
   LicensePanel.Parent := WizardForm;
   LicensePanel.BevelOuter := bvNone;
   LicensePanel.Caption := '';
+  { The XP theme otherwise paints the parent background over Color. }
+  LicensePanel.ParentBackground := False;
   LicensePanel.Color := clWhite;
   PanelHeight := WizardForm.Bevel.Top - WizardForm.MainPanel.Top;
   LicensePanel.SetBounds(0, WizardForm.MainPanel.Top,

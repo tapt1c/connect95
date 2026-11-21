@@ -1,3 +1,3 @@
 cc1586b56335c1ee4947ba8fb4d0addec3a076bc1a4eaf99ff1d6119ac8a5988  ConnectXP-1.0.0-x86.exe
 2faa0dabe7b1b93cf1fd2c33bc9609efae291f1e203a24c06c0f4fd253a5339b  ConnectXP-1.0.0-x86.zip
-c2e624e8241b29233d1e43c38da1e1cd709a96a288b284cd3ed158e887cc7b1e  ConnectXP-1.0.0-Inno-Sources.zip
+d80fcea718fb5e9935aa6a637de03e6bea1941ca3371c57f8d6e867fb851cc16  ConnectXP-1.0.0-Inno-Sources.zip
