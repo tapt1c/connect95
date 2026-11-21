@@ -1,4 +1,4 @@
-ConnectXP 0.9.1 third-party notices
+ConnectXP 0.10.0 third-party notices
 
 Mbed TLS 3.6.8, used under Apache-2.0
 https://github.com/Mbed-TLS/mbedtls

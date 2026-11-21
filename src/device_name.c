@@ -1,3 +1,4 @@
+#include "language.h"
 #include "device_name.h"
 #include "../resources/resource.h"
 #include <wchar.h>
@@ -42,6 +43,12 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
     switch (message) {
     case WM_INITDIALOG: {
         WCHAR name[DEVICE_NAME_MAX + 1];
+        SetWindowTextW(dialog, tr(L"PC device name"));
+        SetDlgItemTextW(dialog, IDC_NAME_DESCRIPTION,
+            tr(L"Shown in KDE Connect on your phone. An idle connection reconnects after saving."));
+        SetDlgItemTextW(dialog, IDC_NAME_LABEL, tr(L"Device name (up to 32 characters)"));
+        SetDlgItemTextW(dialog, IDOK, tr(L"Save"));
+        SetDlgItemTextW(dialog, IDCANCEL, tr(L"Cancel"));
         device_name_load(name);
         SendDlgItemMessageW(dialog, IDC_DEVICE_NAME, EM_LIMITTEXT, DEVICE_NAME_MAX, 0);
         SetDlgItemTextW(dialog, IDC_DEVICE_NAME, name);
@@ -56,7 +63,7 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
             LONG result;
             GetDlgItemTextW(dialog, IDC_DEVICE_NAME, name, ARRAYSIZE(name));
             if (!valid_name(name)) {
-                MessageBoxW(dialog, L"Enter 1–32 characters without leading or trailing spaces.\nKDE Connect filters these characters: \" ' , ; : . ! ? ( ) [ ] < >", L"ConnectXP", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(dialog, tr(L"Enter 1–32 characters without leading or trailing spaces.\nKDE Connect filters these characters: \" ' , ; : . ! ? ( ) [ ] < >"), L"ConnectXP", MB_OK | MB_ICONINFORMATION);
                 SetFocus(GetDlgItem(dialog, IDC_DEVICE_NAME));
                 return TRUE;
             }
@@ -70,7 +77,7 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
                 RegCloseKey(key);
             }
             if (result != ERROR_SUCCESS) {
-                MessageBoxW(dialog, L"Could not save the device name in your Windows profile.", L"ConnectXP", MB_OK | MB_ICONERROR);
+                MessageBoxW(dialog, tr(L"Could not save the device name in your Windows profile."), L"ConnectXP", MB_OK | MB_ICONERROR);
                 return TRUE;
             }
             EndDialog(dialog, IDOK);
@@ -88,6 +95,6 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
 BOOL device_name_dialog(HWND owner)
 {
     INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_DEVICE_NAME), owner, name_dialog_proc, 0);
-    if (result == -1) MessageBoxW(owner, L"Could not open the device name dialog.", L"ConnectXP", MB_OK | MB_ICONERROR);
+    if (result == -1) MessageBoxW(owner, tr(L"Could not open the device name dialog."), L"ConnectXP", MB_OK | MB_ICONERROR);
     return result == IDOK;
 }

@@ -1,4 +1,5 @@
 #include "notifications_ui.h"
+#include "language.h"
 #include <commctrl.h>
 #include <string.h>
 
@@ -9,6 +10,23 @@ static int rowCount;
 static unsigned int shownRevision = (unsigned int)-1, shownGeneration = (unsigned int)-1;
 static BOOL rebuilding;
 static char wantedId[NOTIFICATION_ID_BYTES + 1];
+
+void notifications_ui_translate(void)
+{
+    LVCOLUMNW column;
+    SessionStatus snapshot;
+    if (!notificationWindow) return;
+    SetWindowTextW(notificationWindow, tr(L"Notifications — ConnectXP"));
+    ZeroMemory(&column, sizeof(column));
+    column.mask = LVCF_TEXT;
+    column.pszText = (LPWSTR)tr(L"Application");
+    SendMessageW(notificationList, LVM_SETCOLUMNW, 0, (LPARAM)&column);
+    column.pszText = (LPWSTR)tr(L"Title");
+    SendMessageW(notificationList, LVM_SETCOLUMNW, 1, (LPARAM)&column);
+    shownRevision = (unsigned int)-1;
+    session_status(&snapshot);
+    notifications_ui_tick(&snapshot);
+}
 
 static void preview(const char *source, WCHAR *destination, int capacity)
 {
@@ -43,7 +61,7 @@ void notifications_balloon_text(const PhoneNotification *notification, WCHAR tit
         text[length] = 0;
     }
     if (length < 255) preview(notification->text, text + length, 256 - length);
-    if (!text[0]) lstrcpyW(text, L"New notification from your phone.");
+    if (!text[0]) lstrcpyW(text, tr(L"New notification from your phone."));
 }
 
 static void setDetailText(const WCHAR *text)
@@ -72,14 +90,14 @@ static void showDetails(void)
     size_t capacity;
     int position, converted;
     if (selected < 0 || selected >= rowCount) {
-        setDetailText(L"Enable Notification sync and notification access for KDE Connect on your phone.\r\nSelect a notification to read its full text.");
+        setDetailText(tr(L"Enable Notification sync and notification access for KDE Connect on your phone.\r\nSelect a notification to read its full text."));
         return;
     }
     item = HeapAlloc(GetProcessHeap(), 0, sizeof(*item));
     if (!item) return;
     if (!session_notification_get(rows[selected].id, item)) {
         HeapFree(GetProcessHeap(), 0, item);
-        setDetailText(L"This notification was removed from the phone.");
+        setDetailText(tr(L"This notification was removed from the phone."));
         return;
     }
     capacity = 2 * (strlen(item->app) + strlen(item->title) + strlen(item->text)) + 10;
@@ -158,8 +176,8 @@ void notifications_ui_tick(const SessionStatus *snapshot)
         wantedId[0] = 0;
         showDetails();
     }
-    wsprintfW(statusText, snapshot->phase == SESSION_PAIRED ? L"Phone notifications — %d" :
-              L"Disconnected — %d received notifications", rowCount);
+    wsprintfW(statusText, snapshot->phase == SESSION_PAIRED ? tr(L"Phone notifications — %d") :
+              tr(L"Disconnected — %d received notifications"), rowCount);
     SetWindowTextW(notificationStatus, statusText);
 }
 
@@ -199,9 +217,9 @@ static LRESULT CALLBACK notificationProc(HWND window, UINT message, WPARAM wPara
         ZeroMemory(&column, sizeof(column));
         column.mask = LVCF_TEXT | LVCF_WIDTH;
         column.cx = 150;
-        column.pszText = L"Application";
+        column.pszText = (LPWSTR)tr(L"Application");
         SendMessageW(notificationList, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
-        column.pszText = L"Title";
+        column.pszText = (LPWSTR)tr(L"Title");
         SendMessageW(notificationList, LVM_INSERTCOLUMNW, 1, (LPARAM)&column);
         DeleteMenu(GetSystemMenu(window, FALSE), SC_MAXIMIZE, MF_BYCOMMAND);
         return 0;
@@ -254,11 +272,11 @@ void notifications_ui_show(HWND owner, HFONT font, const char *id)
         notificationFont = font;
         shownRevision = (unsigned int)-1;
         shownGeneration = (unsigned int)-1;
-        notificationWindow = CreateWindowExW(0, cls.lpszClassName, L"Notifications — ConnectXP",
+        notificationWindow = CreateWindowExW(0, cls.lpszClassName, tr(L"Notifications — ConnectXP"),
             WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 660, 470,
             owner, NULL, cls.hInstance, NULL);
         if (!notificationWindow) {
-            MessageBoxW(owner, L"Could not open the notifications window.", L"ConnectXP", MB_OK | MB_ICONERROR);
+            MessageBoxW(owner, tr(L"Could not open the notifications window."), L"ConnectXP", MB_OK | MB_ICONERROR);
             return;
         }
     }

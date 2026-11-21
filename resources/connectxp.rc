@@ -7,8 +7,8 @@ IDI_APP ICON "connectxp.ico"
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,9,1,0
-PRODUCTVERSION 0,9,1,0
+FILEVERSION 0,10,0,0
+PRODUCTVERSION 0,10,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,7 +18,7 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "ConnectXP\0"
    VALUE "ProductName", "ConnectXP\0"
-   VALUE "FileVersion", "0.9.1\0"
+   VALUE "FileVersion", "0.10.0\0"
   END
  END
  BLOCK "VarFileInfo"
@@ -32,8 +32,8 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMEN
 CAPTION "PC device name"
 FONT 8, "MS Shell Dlg"
 BEGIN
-    LTEXT "Shown in KDE Connect on your phone. An idle connection reconnects after saving.", -1, 10, 10, 230, 24
-    LTEXT "Device name (up to 32 characters)", -1, 10, 38, 230, 10
+    LTEXT "Shown in KDE Connect on your phone. An idle connection reconnects after saving.", IDC_NAME_DESCRIPTION, 10, 10, 230, 24
+    LTEXT "Device name (up to 32 characters)", IDC_NAME_LABEL, 10, 38, 230, 10
     EDITTEXT IDC_DEVICE_NAME, 10, 50, 230, 14, ES_AUTOHSCROLL
     DEFPUSHBUTTON "Save", IDOK, 124, 77, 55, 14
     PUSHBUTTON "Cancel", IDCANCEL, 185, 77, 55, 14

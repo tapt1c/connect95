@@ -3,4 +3,6 @@
 #define IDI_APP 100
 #define IDD_DEVICE_NAME 300
 #define IDC_DEVICE_NAME 301
+#define IDC_NAME_DESCRIPTION 302
+#define IDC_NAME_LABEL 303
 #endif
