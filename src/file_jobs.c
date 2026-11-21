@@ -15,7 +15,7 @@ static int queued, historyCount;
 static char queuePeer[39];
 static TransferRecord history[JOB_LIMIT];
 static HWND dialog, nameLabel, detailLabel, meter, cancelButton, folderButton;
-static HWND historyDialog, historyList, historyDetail, historyHint, historyFolder, historyClose;
+static HWND historyDialog, historyList, historyDetail, historyHint, historyFolder, historyClose, historyRemove;
 static BOOL updatingHistory, animationAvailable;
 static int lastLayoutMode = -1;
 static HWND animation;
@@ -46,28 +46,29 @@ static BOOL history_path(WCHAR path[MAX_PATH], BOOL temporary)
     return TRUE;
 }
 
-static void save_history(void)
+static BOOL save_history(const TransferRecord *records, int count)
 {
     WCHAR path[MAX_PATH], temporary[MAX_PATH];
     cJSON *array = cJSON_CreateArray();
     char *text;
     int i;
-    if (!array) return;
-    for (i = 0; i < historyCount; ++i) {
+    BOOL saved = FALSE;
+    if (!array) return FALSE;
+    for (i = 0; i < count; ++i) {
         char name[1041], result[2049];
         cJSON *item = cJSON_CreateObject();
-        if (!WideCharToMultiByte(CP_UTF8, 0, history[i].name, -1, name, sizeof(name), NULL, NULL) ||
-            !WideCharToMultiByte(CP_UTF8, 0, history[i].result, -1, result, sizeof(result), NULL, NULL) ||
+        if (!WideCharToMultiByte(CP_UTF8, 0, records[i].name, -1, name, sizeof(name), NULL, NULL) ||
+            !WideCharToMultiByte(CP_UTF8, 0, records[i].result, -1, result, sizeof(result), NULL, NULL) ||
             !item || !cJSON_AddStringToObject(item, "name", name) || !cJSON_AddStringToObject(item, "result", result) ||
-            !cJSON_AddBoolToObject(item, "receiving", history[i].receiving) ||
-            !cJSON_AddBoolToObject(item, "succeeded", history[i].succeeded) ||
-            !cJSON_AddNumberToObject(item, "year", history[i].time.wYear) ||
-            !cJSON_AddNumberToObject(item, "month", history[i].time.wMonth) ||
-            !cJSON_AddNumberToObject(item, "day", history[i].time.wDay) ||
-            !cJSON_AddNumberToObject(item, "hour", history[i].time.wHour) ||
-            !cJSON_AddNumberToObject(item, "minute", history[i].time.wMinute) ||
+            !cJSON_AddBoolToObject(item, "receiving", records[i].receiving) ||
+            !cJSON_AddBoolToObject(item, "succeeded", records[i].succeeded) ||
+            !cJSON_AddNumberToObject(item, "year", records[i].time.wYear) ||
+            !cJSON_AddNumberToObject(item, "month", records[i].time.wMonth) ||
+            !cJSON_AddNumberToObject(item, "day", records[i].time.wDay) ||
+            !cJSON_AddNumberToObject(item, "hour", records[i].time.wHour) ||
+            !cJSON_AddNumberToObject(item, "minute", records[i].time.wMinute) ||
             !cJSON_AddItemToArray(array, item)) {
-            cJSON_Delete(item); cJSON_Delete(array); return;
+            cJSON_Delete(item); cJSON_Delete(array); return FALSE;
         }
     }
     text = cJSON_PrintUnformatted(array);
@@ -77,11 +78,13 @@ static void save_history(void)
             DWORD written, length = (DWORD)strlen(text);
             BOOL ok = WriteFile(file, text, length, &written, NULL) && written == length && FlushFileBuffers(file);
             CloseHandle(file);
-            if (!ok || !MoveFileExW(temporary, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) DeleteFileW(temporary);
+            saved = ok && MoveFileExW(temporary, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+            if (!saved) DeleteFileW(temporary);
         }
     }
     cJSON_free(text);
     cJSON_Delete(array);
+    return saved;
 }
 
 void jobs_init(void)
@@ -214,6 +217,7 @@ static void history_details(void)
 {
     WCHAR text[1100];
     int selected = ListView_GetNextItem(historyList, -1, LVNI_SELECTED);
+    EnableWindow(historyRemove, ListView_GetSelectedCount(historyList) != 0);
     if (selected < 0 || selected >= historyCount) {
         set_text(historyDetail, tr(historyCount ? L"Select a transfer to view its details." : L"No completed transfers"));
         return;
@@ -222,10 +226,21 @@ static void history_details(void)
     set_text(historyDetail, text);
 }
 
-static void fill_history(void)
+static void fill_history(int added, BOOL clearSelection)
 {
-    int i;
+    int i, selected, focused, anchor, previousRows;
+    BOOL selections[JOB_LIMIT] = {0};
     if (!historyList) return;
+    previousRows = ListView_GetItemCount(historyList);
+    focused = ListView_GetNextItem(historyList, -1, LVNI_FOCUSED);
+    if (focused >= 0) focused += added;
+    anchor = ListView_GetSelectionMark(historyList);
+    if (anchor >= 0) anchor += added;
+    if (!clearSelection) {
+        selected = -1;
+        while ((selected = ListView_GetNextItem(historyList, selected, LVNI_SELECTED)) >= 0)
+            if (selected + added < historyCount) selections[selected + added] = TRUE;
+    }
     updatingHistory = TRUE;
     SendMessageW(historyList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(historyList);
@@ -248,18 +263,47 @@ static void fill_history(void)
         item.iSubItem = 3; item.pszText = (LPWSTR)tr(record->succeeded ? L"Completed" : L"Failed or cancelled");
         SendMessageW(historyList, LVM_SETITEMTEXTW, i, (LPARAM)&item);
     }
-    if (historyCount) ListView_SetItemState(historyList, 0, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    if (!clearSelection && !previousRows && historyCount) { selections[0] = TRUE; focused = anchor = 0; }
+    for (i = 0; i < historyCount; ++i) {
+        UINT flags = selections[i] ? LVIS_SELECTED : 0;
+        if (!clearSelection && i == focused) flags |= LVIS_FOCUSED;
+        if (flags) ListView_SetItemState(historyList, i, flags, LVIS_SELECTED | LVIS_FOCUSED);
+    }
+    ListView_SetSelectionMark(historyList, !clearSelection && anchor < historyCount ? anchor : -1);
+    if (!clearSelection && focused >= 0 && focused < historyCount) ListView_EnsureVisible(historyList, focused, FALSE);
     SendMessageW(historyList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(historyList, NULL, TRUE);
     updatingHistory = FALSE;
     history_details();
 }
 
+static void remove_selected_history(HWND window)
+{
+    TransferRecord *retained;
+    int i, count = 0;
+    if (!ListView_GetSelectedCount(historyList)) return;
+    retained = HeapAlloc(GetProcessHeap(), 0, sizeof(history));
+    if (!retained) {
+        MessageBoxW(window, tr(L"Could not update transfer history."), L"ConnectXP", MB_OK | MB_ICONERROR);
+        return;
+    }
+    for (i = 0; i < historyCount; ++i)
+        if (!(ListView_GetItemState(historyList, i, LVIS_SELECTED) & LVIS_SELECTED)) retained[count++] = history[i];
+    /* Persist first: a failed write must leave the displayed records intact. */
+    if (save_history(retained, count)) {
+        CopyMemory(history, retained, count * sizeof(history[0]));
+        historyCount = count;
+        fill_history(0, TRUE);
+        SetFocus(historyList);
+    } else MessageBoxW(window, tr(L"Could not update transfer history."), L"ConnectXP", MB_OK | MB_ICONERROR);
+    HeapFree(GetProcessHeap(), 0, retained);
+}
+
 static void history_layout(HWND window)
 {
     RECT area;
     int width, height, available;
-    UiPlacement items[5];
+    UiPlacement items[6];
     GetClientRect(window, &area);
     width = area.right; height = area.bottom;
     available = width - 24;
@@ -268,7 +312,8 @@ static void history_layout(HWND window)
     items[2] = (UiPlacement){historyDetail, {12, height - 96, available, 52}, 1};
     items[3] = (UiPlacement){historyFolder, {12, height - 32, 140, 24}, 1};
     items[4] = (UiPlacement){historyClose, {width - 102, height - 32, 90, 24}, 1};
-    ui_apply_layout(window, items, 5);
+    items[5] = (UiPlacement){historyRemove, {164, height - 32, 160, 24}, 1};
+    ui_apply_layout(window, items, 6);
     ListView_SetColumnWidth(historyList, 0, available * 34 / 100);
     ListView_SetColumnWidth(historyList, 1, available * 16 / 100);
     ListView_SetColumnWidth(historyList, 2, 128);
@@ -284,14 +329,15 @@ static LRESULT CALLBACK history_proc(HWND window, UINT message, WPARAM wParam, L
         LVCOLUMNW column;
         const WCHAR *columns[] = {L"File", L"Direction", L"Date", L"Result"};
         int i;
-        historyHint = CreateWindowW(L"STATIC", tr(L"Select a transfer to view its details."), WS_CHILD | WS_VISIBLE,
+        historyHint = CreateWindowW(L"STATIC", tr(L"Ctrl/Shift: select multiple records. Delete: remove selected entries."), WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, window, NULL, instance, NULL);
-        historyList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        historyList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
             0, 0, 0, 0, window, NULL, instance, NULL);
         historyDetail = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL,
             0, 0, 0, 0, window, NULL, instance, NULL);
         historyFolder = CreateWindowW(L"BUTTON", tr(L"Open folder"), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 0, 0, window, (HMENU)1, instance, NULL);
         historyClose = CreateWindowW(L"BUTTON", tr(L"Close"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 0, 0, window, (HMENU)3, instance, NULL);
+        historyRemove = CreateWindowW(L"BUTTON", tr(L"Remove selected"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_DISABLED, 0, 0, 0, 0, window, (HMENU)4, instance, NULL);
         ListView_SetExtendedListViewStyle(historyList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
         for (child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) SendMessageW(child, WM_SETFONT, (WPARAM)dialogFont, TRUE);
         ZeroMemory(&column, sizeof(column));
@@ -301,7 +347,7 @@ static LRESULT CALLBACK history_proc(HWND window, UINT message, WPARAM wParam, L
             column.pszText = (LPWSTR)tr(columns[i]);
             SendMessageW(historyList, LVM_INSERTCOLUMNW, i, (LPARAM)&column);
         }
-        fill_history();
+        fill_history(0, FALSE);
         return 0;
     }
     if (message == WM_SIZE) { if (wParam != SIZE_MINIMIZED && historyList) history_layout(window); return 0; }
@@ -310,15 +356,19 @@ static LRESULT CALLBACK history_proc(HWND window, UINT message, WPARAM wParam, L
         ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 340;
         return 0;
     }
-    if (message == WM_NOTIFY && !updatingHistory && ((NMHDR *)lParam)->hwndFrom == historyList &&
-        ((NMHDR *)lParam)->code == LVN_ITEMCHANGED) { history_details(); return 0; }
+    if (message == WM_NOTIFY && !updatingHistory && ((NMHDR *)lParam)->hwndFrom == historyList) {
+        if (((NMHDR *)lParam)->code == LVN_ITEMCHANGED) history_details();
+        else if (((NMHDR *)lParam)->code == LVN_KEYDOWN && ((NMLVKEYDOWN *)lParam)->wVKey == VK_DELETE) remove_selected_history(window);
+        return 0;
+    }
     if (message == WM_COMMAND) {
         if (LOWORD(wParam) == 1) jobs_open_folder(window);
+        else if (LOWORD(wParam) == 4) remove_selected_history(window);
         else if (LOWORD(wParam) == 3 || LOWORD(wParam) == IDCANCEL) DestroyWindow(window);
         return 0;
     }
     if (message == WM_DESTROY) {
-        historyDialog = historyList = historyDetail = historyHint = historyFolder = historyClose = NULL;
+        historyDialog = historyList = historyDetail = historyHint = historyFolder = historyClose = historyRemove = NULL;
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -440,14 +490,16 @@ void jobs_tick(HWND owner, HFONT font, const SessionStatus *snapshot)
     TransferRecord record;
     SessionStatus current = *snapshot;
     BOOL changed = FALSE;
+    int added = 0;
     while (session_transfer_record(&record)) {
         if (historyCount == JOB_LIMIT) --historyCount;
         memmove(history + 1, history, historyCount * sizeof(history[0]));
         history[0] = record;
         ++historyCount;
         changed = TRUE;
+        ++added;
     }
-    if (changed) { save_history(); fill_history(); }
+    if (changed) { save_history(history, historyCount); fill_history(added, FALSE); }
     if (queued && (current.phase == SESSION_ERROR || current.phase == SESSION_CLOSED || strcmp(queuePeer, current.deviceId))) queued = 0;
     if (queued && current.phase == SESSION_PAIRED && !current.transferActive && session_send_file(queue[0])) {
         --queued;
@@ -512,14 +564,15 @@ void jobs_translate(void)
         const WCHAR *columns[] = {L"File", L"Direction", L"Date", L"Result"};
         int i;
         set_text(historyDialog, tr(L"Transfer history — ConnectXP"));
-        set_text(historyHint, tr(L"Select a transfer to view its details."));
+        set_text(historyHint, tr(L"Ctrl/Shift: select multiple records. Delete: remove selected entries."));
         set_text(historyFolder, tr(L"Open folder"));
         set_text(historyClose, tr(L"Close"));
+        set_text(historyRemove, tr(L"Remove selected"));
         ZeroMemory(&column, sizeof(column)); column.mask = LVCF_TEXT;
         for (i = 0; i < 4; ++i) {
             column.pszText = (LPWSTR)tr(columns[i]);
             SendMessageW(historyList, LVM_SETCOLUMNW, i, (LPARAM)&column);
         }
-        fill_history();
+        fill_history(0, FALSE);
     }
 }

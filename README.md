@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.4 introduces an Explorer-style task pane, compact themed action buttons,
+Version 0.11.5 introduces an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
@@ -181,6 +181,14 @@ File, Direction, Date and Result columns, with the full filename and result
 available in a scrollable detail pane. Selecting Transfer history never opens
 an idle download popup.
 
+Select one or more history records with Ctrl/Shift, then click **Remove selected**
+or press **Delete** while the list has focus. Only selected history entries are
+removed; transferred files are preserved. The filtered history is saved before
+updating the display. If writing fails, the existing records and selection stay
+intact and an error is shown. Multi-selection is retained when new transfers
+arrive or the interface language changes. After deletion, selection is cleared.
+
+
 **Find phone** sends `kdeconnect.findmyphone.request` to the paired phone.
 The phone's KDE Connect plugins must be enabled for these features.
 
@@ -294,7 +302,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.4 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.5 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -357,7 +365,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.4 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.5 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,
