@@ -5,7 +5,7 @@
 
 static int selectedLanguage = LANGUAGE_ENGLISH;
 static const struct { const WCHAR *english, *russian; } translations[] = {
-    {L"Idea author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP", L"Автор идеи - Daniel Myslivets\r\nРеализация KDE Connect для Windows XP"},
+    {L"Author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP", L"Автор идеи - Daniel Myslivets\r\nРеализация KDE Connect для Windows XP"},
     {L"File", L"Файл"},
     {L"Edit", L"Правка"},
     {L"Device", L"Устройство"},
@@ -193,5 +193,5 @@ const WCHAR *language_status(const WCHAR *english, WCHAR *buffer, int capacity)
 
 void language_about(HWND owner, HICON icon)
 {
-    ShellAboutW(owner, L"ConnectXP", tr(L"Idea author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP"), icon);
+    ShellAboutW(owner, L"ConnectXP", tr(L"Author - Daniel Myslivets\r\nKDE Connect implementation for Windows XP"), icon);
 }
