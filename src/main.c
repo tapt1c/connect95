@@ -4,6 +4,7 @@
 #include "file_jobs.h"
 #include "settings.h"
 #include "theme.h"
+#include "sidebar_layout.h"
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
@@ -45,14 +46,18 @@
 #define ID_SIDE_SEND 260
 #define ID_SIDE_RING 261
 #define ID_SIDE_CLIPBOARD 262
+#define ID_GROUP_DEVICES 270
+#define ID_GROUP_FILES 271
+#define ID_GROUP_OTHER 272
 #define MAX_PEERS 64
 #define DEVICE_PANE_WIDTH 220
 
 static HINSTANCE instance;
 static HWND devices, heading, state, battery, sendButton, ringButton, pairButton;
 static HWND clipboardButton, transferBox, transferText, progress, statusBar, cancelTransferButton;
-static HFONT normalFont, titleFont, groupFont;
+static HFONT normalFont, titleFont, groupFont, linkFont;
 static HICON icons[4];
+static HICON taskIcons[3];
 static NOTIFYICONDATAW tray;
 static BOOL trayAdded, balloonBusy;
 static DWORD balloonStarted, balloonEnded;
@@ -70,7 +75,9 @@ static HWND recentBox, recentText;
 static BOOL autoPaused, startInTray, batteryAdded, lowBatteryWarned;
 static DWORD lastAutoAttempt;
 static int autoCursor;
-static HICON batteryIcon, phonePortrait;
+static HICON batteryIcon;
+static HWND groupHeaders[3];
+static BOOL groupCollapsed[3];
 static unsigned int batteryGeneration;
 static int previousBattery = -2, previousCharging = -1;
 
@@ -608,6 +615,25 @@ static HICON loadSystemIcon(int shellIndex, int fallbackResource, int pixels)
     return icon;
 }
 
+static LRESULT CALLBACK taskLinkProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                     UINT_PTR id, DWORD_PTR data)
+{
+    (void)id; (void)data;
+    if (message == WM_MOUSEMOVE) {
+        TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, window, 0};
+        TrackMouseEvent(&track);
+        InvalidateRect(window, NULL, FALSE);
+    } else if (message == WM_MOUSELEAVE) InvalidateRect(window, NULL, FALSE);
+    else if (message == WM_SETCURSOR && IsWindowEnabled(window)) {
+        SetCursor(LoadCursorW(NULL, IDC_HAND));
+        return TRUE;
+    } else if (message == WM_KEYDOWN && wParam == VK_RETURN) {
+        SendMessageW(GetParent(window), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(window), BN_CLICKED), (LPARAM)window);
+        return 0;
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
 static HWND control(HWND parent, const WCHAR *kind, const WCHAR *text,
                     DWORD style, int id)
 {
@@ -615,6 +641,9 @@ static HWND control(HWND parent, const WCHAR *kind, const WCHAR *text,
                                  0, 0, 0, 0, parent, (HMENU)(INT_PTR)id,
                                  instance, NULL);
     if (child) SendMessageW(child, WM_SETFONT, (WPARAM)normalFont, TRUE);
+    if (child && (id == ID_SIDE_SEND || id == ID_OPEN_FOLDER || id == ID_HISTORY ||
+                  id == ID_SIDE_RING || id == ID_NOTIFICATIONS || id == ID_SIDE_CLIPBOARD))
+        SetWindowSubclass(child, taskLinkProc, 1, 0);
     return child;
 }
 
@@ -672,6 +701,9 @@ static void updateLanguage(HWND window)
     if (replacement && SetMenu(window, replacement)) DestroyMenu(previous);
     else if (replacement) DestroyMenu(replacement);
     DrawMenuBar(window);
+    setControlText(groupHeaders[0], tr(L"Devices"));
+    setControlText(groupHeaders[1], tr(L"File transfers"));
+    setControlText(groupHeaders[2], tr(L"Other actions"));
     setControlText(sideSend, tr(L"Send file…"));
     setControlText(sideFolder, tr(L"Open folder"));
     setControlText(sideHistory, tr(L"Transfer history"));
@@ -751,31 +783,42 @@ static void layout(HWND window)
     rightX = left + 20;
     rightWidth = width - rightX - 10;
     buttonWidth = (rightWidth - 12) / 3;
-    buttonY = 140;
-    MoveWindow(devices, 14, 44, left - 28, height - 340, TRUE);
+    buttonY = 128;
+    SidebarLayout sidebar = sidebar_layout(height, groupCollapsed[0], groupCollapsed[1], groupCollapsed[2]);
+    MoveWindow(groupHeaders[0], 12, sidebar.devicesTop, left - 24, 26, TRUE);
+    MoveWindow(groupHeaders[1], 12, sidebar.filesTop, left - 24, 26, TRUE);
+    MoveWindow(groupHeaders[2], 12, sidebar.otherTop, left - 24, 26, TRUE);
+    ShowWindow(devices, groupCollapsed[0] ? SW_HIDE : SW_SHOWNA);
+    if (!groupCollapsed[0]) MoveWindow(devices, 14, sidebar.devicesTop + 28, left - 28, sidebar.devicesBody - 4, TRUE);
     MoveWindow(heading, rightX + 56, 20, rightWidth - 56, 28, TRUE);
     /* Keep the two-line status above the battery and pairing row. STATIC
        background erasure can overwrite a sibling if these rectangles overlap. */
-    MoveWindow(state, rightX + 56, 55, rightWidth - 56, 34, TRUE);
-    MoveWindow(battery, rightX + 56, 99, rightWidth - 250, 21, TRUE);
-    MoveWindow(pairButton, rightX + rightWidth - 180, 95, 180, 26, TRUE);
-    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 38, TRUE);
-    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 38, TRUE);
+    MoveWindow(state, rightX + 56, 52, rightWidth - 56, 34, TRUE);
+    MoveWindow(battery, rightX + 56, 90, rightWidth - 250, 21, TRUE);
+    MoveWindow(pairButton, rightX + rightWidth - 180, 86, 180, 26, TRUE);
+    MoveWindow(sendButton, rightX, buttonY, buttonWidth, 48, TRUE);
+    MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 48, TRUE);
     MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
-               buttonY, rightWidth - (buttonWidth + 6) * 2, 38, TRUE);
+               buttonY, rightWidth - (buttonWidth + 6) * 2, 48, TRUE);
     MoveWindow(transferBox, rightX, 196, rightWidth, 128, TRUE);
     MoveWindow(transferText, rightX + 12, 220, rightWidth - 110, 40, TRUE);
     MoveWindow(cancelTransferButton, rightX + rightWidth - 88, 220, 76, 26, TRUE);
     MoveWindow(progress, rightX + 12, 282, rightWidth - 24, 18, TRUE);
-    MoveWindow(sideSend, 20, height - 244, left - 40, 24, TRUE);
-    MoveWindow(sideFolder, 20, height - 216, left - 40, 24, TRUE);
-    MoveWindow(sideHistory, 20, height - 188, left - 40, 24, TRUE);
-    MoveWindow(sideRing, 20, height - 112, left - 40, 24, TRUE);
-    MoveWindow(sideNotifications, 20, height - 84, left - 40, 24, TRUE);
-    MoveWindow(sideClipboard, 20, height - 56, left - 40, 24, TRUE);
+    ShowWindow(sideSend, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideSend, 22, sidebar.filesTop + 34, left - 44, 22, TRUE);
+    ShowWindow(sideFolder, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideFolder, 22, sidebar.filesTop + 62, left - 44, 22, TRUE);
+    ShowWindow(sideHistory, groupCollapsed[1] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideHistory, 22, sidebar.filesTop + 90, left - 44, 22, TRUE);
+    ShowWindow(sideRing, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideRing, 22, sidebar.otherTop + 34, left - 44, 22, TRUE);
+    ShowWindow(sideNotifications, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideNotifications, 22, sidebar.otherTop + 62, left - 44, 22, TRUE);
+    ShowWindow(sideClipboard, groupCollapsed[2] ? SW_HIDE : SW_SHOWNA);
+    MoveWindow(sideClipboard, 22, sidebar.otherTop + 90, left - 44, 22, TRUE);
     MoveWindow(recentBox, rightX, 340, rightWidth, height - 352, TRUE);
     MoveWindow(recentText, rightX + 12, 364, rightWidth - 24, height - 388, TRUE);
-    InvalidateRect(window, NULL, TRUE);
+    RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 static void drawButton(const DRAWITEMSTRUCT *item)
@@ -792,14 +835,39 @@ static void drawButton(const DRAWITEMSTRUCT *item)
         else if (item->hwndItem == sideRing) iconIndex = 2;
         else iconIndex = 3;
     }
-    if (side) theme_panel(item->hDC, &rect, FALSE);
+    if (item->CtlID >= ID_GROUP_DEVICES && item->CtlID <= ID_GROUP_OTHER) {
+        RECT parent, status, pane;
+        POINT origin = {0, 0};
+        GetClientRect(GetParent(item->hwndItem), &parent);
+        GetWindowRect(statusBar, &status);
+        MapWindowPoints(item->hwndItem, GetParent(item->hwndItem), &origin, 1);
+        SetRect(&pane, 0, 0, DEVICE_PANE_WIDTH, parent.bottom - (status.bottom - status.top));
+        SaveDC(item->hDC);
+        OffsetViewportOrgEx(item->hDC, -origin.x, -origin.y, NULL);
+        theme_sidebar(item->hDC, &pane);
+        RestoreDC(item->hDC, -1);
+        GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
+        theme_group_header(item->hDC, &rect, label, groupFont, groupCollapsed[item->CtlID - ID_GROUP_DEVICES], (item->itemState & ODS_FOCUS) != 0);
+        return;
+    }
+    if (side) theme_link_background(item->hDC, &rect);
     else theme_button(item->hDC, &rect, (item->itemState & ODS_SELECTED) != 0, disabled, (item->itemState & ODS_FOCUS) != 0);
-    if (iconIndex >= 1 && iconIndex <= 3) DrawIconEx(item->hDC, 9, (rect.bottom - 16) / 2, icons[iconIndex], 16, 16, 0, NULL, DI_NORMAL);
+    if (iconIndex >= 1 && iconIndex <= 3) {
+        int size = side ? 16 : 32;
+        DrawIconEx(item->hDC, side ? 2 : 9, (rect.bottom - size) / 2,
+            side ? taskIcons[iconIndex - 1] : icons[iconIndex], size, size, 0, NULL, DI_NORMAL);
+    }
     GetWindowTextW(item->hwndItem, label, ARRAYSIZE(label));
     SetBkMode(item->hDC, TRANSPARENT);
-    SetTextColor(item->hDC, GetSysColor(disabled ? COLOR_GRAYTEXT : side ? COLOR_HOTLIGHT : COLOR_BTNTEXT));
-    previous = SelectObject(item->hDC, normalFont);
-    textRect.left += 30;
+    SetTextColor(item->hDC, disabled ? GetSysColor(COLOR_GRAYTEXT) : side ? theme_link_color() : GetSysColor(COLOR_BTNTEXT));
+    {
+        POINT cursor;
+        RECT screen;
+        GetCursorPos(&cursor);
+        GetWindowRect(item->hwndItem, &screen);
+        previous = SelectObject(item->hDC, side && !disabled && PtInRect(&screen, cursor) ? linkFont : normalFont);
+    }
+    textRect.left += side ? 26 : 49;
     textRect.right -= 4;
     DrawTextW(item->hDC, label, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item->hDC, previous);
@@ -867,15 +935,21 @@ static BOOL createControls(HWND window)
     if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         return FALSE;
     normalFont = CreateFontIndirectW(&metrics.lfMessageFont);
+    metrics.lfMessageFont.lfUnderline = TRUE;
+    linkFont = CreateFontIndirectW(&metrics.lfMessageFont);
+    metrics.lfMessageFont.lfUnderline = FALSE;
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     groupFont = CreateFontIndirectW(&metrics.lfMessageFont);
     metrics.lfMessageFont.lfHeight = -18;
     metrics.lfMessageFont.lfWeight = FW_BOLD;
     titleFont = CreateFontIndirectW(&metrics.lfMessageFont);
-    devices = CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
+    devices = CreateWindowExW(0, WC_TREEVIEWW, L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, window, NULL, instance, NULL);
     SendMessageW(devices, WM_SETFONT, (WPARAM)normalFont, TRUE);
+    groupHeaders[0] = control(window, L"BUTTON", tr(L"Devices"), BS_OWNERDRAW | WS_TABSTOP, ID_GROUP_DEVICES);
+    groupHeaders[1] = control(window, L"BUTTON", tr(L"File transfers"), BS_OWNERDRAW | WS_TABSTOP, ID_GROUP_FILES);
+    groupHeaders[2] = control(window, L"BUTTON", tr(L"Other actions"), BS_OWNERDRAW | WS_TABSTOP, ID_GROUP_OTHER);
     sideSend = control(window, L"BUTTON", tr(L"Send file…"), BS_OWNERDRAW | WS_TABSTOP, ID_SIDE_SEND);
     sideFolder = control(window, L"BUTTON", tr(L"Open folder"), BS_OWNERDRAW | WS_TABSTOP, ID_OPEN_FOLDER);
     sideHistory = control(window, L"BUTTON", tr(L"Transfer history"), BS_OWNERDRAW | WS_TABSTOP, ID_HISTORY);
@@ -899,7 +973,7 @@ static BOOL createControls(HWND window)
     statusBar = control(window, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0);
     setStatusText(tr(L"  Ready."));
     if (devices && !initializeDeviceTree()) return FALSE;
-    return normalFont && titleFont && groupFont && sideSend && sideFolder && sideHistory && sideRing &&
+    return normalFont && titleFont && groupFont && linkFont && groupHeaders[0] && groupHeaders[1] && groupHeaders[2] && sideSend && sideFolder && sideHistory && sideRing &&
         sideNotifications && sideClipboard && recentBox && recentText && devices && heading && state && battery &&
         pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
         cancelTransferButton && progress && statusBar;
@@ -916,6 +990,8 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_CREATE:
         if (!createControls(window)) return -1;
         theme_refresh(window);
+        TreeView_SetBkColor(devices, theme_body_color());
+        TreeView_SetTextColor(devices, theme_link_color());
         jobs_init();
         DragAcceptFiles(window, TRUE);
         network_service_start(window, WM_INCOMING);
@@ -939,16 +1015,23 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_SYSCOLORCHANGE:
         theme_refresh(window);
         previousBattery = -2;
+        TreeView_SetBkColor(devices, theme_body_color());
+        TreeView_SetTextColor(devices, theme_link_color());
         RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
         return 0;
     case WM_DROPFILES:
         if (pairedSelection()) jobs_drop(window, (HDROP)wParam);
         else { DragFinish((HDROP)wParam); MessageBoxW(window, tr(L"Connect to a phone before sending files."), L"ConnectXP", MB_OK | MB_ICONINFORMATION); }
         return 0;
+    case WM_CTLCOLORSTATIC:
+        SetBkMode((HDC)wParam, TRANSPARENT);
+        SetTextColor((HDC)wParam, GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));
+        return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
     case WM_PAINT: {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
-        RECT client, panel, header, statusRect;
+        RECT client, panel, statusRect;
         HWND child;
         int height;
         HGDIOBJ oldFont = SelectObject(dc, normalFont);
@@ -966,26 +1049,22 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
         }
         SetRect(&panel, 0, 0, DEVICE_PANE_WIDTH, height);
         theme_sidebar(dc, &panel);
-        SetRect(&panel, 12, height - 252, DEVICE_PANE_WIDTH - 12, height - 156);
-        theme_panel(dc, &panel, FALSE);
-        SetRect(&panel, 12, height - 120, DEVICE_PANE_WIDTH - 12, height - 24);
-        theme_panel(dc, &panel, FALSE);
-        SelectObject(dc, groupFont);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
-        SetRect(&header, 12, 16, DEVICE_PANE_WIDTH - 12, 44);
-        theme_panel(dc, &header, TRUE);
-        header.left += 8;
-        DrawTextW(dc, tr(L"Devices"), -1, &header, DT_SINGLELINE | DT_VCENTER);
-        SetRect(&header, 12, height - 280, DEVICE_PANE_WIDTH - 12, height - 252);
-        theme_panel(dc, &header, TRUE);
-        header.left += 8;
-        DrawTextW(dc, tr(L"File transfers"), -1, &header, DT_SINGLELINE | DT_VCENTER);
-        SetRect(&header, 12, height - 148, DEVICE_PANE_WIDTH - 12, height - 120);
-        theme_panel(dc, &header, TRUE);
-        header.left += 8;
-        DrawTextW(dc, tr(L"Other actions"), -1, &header, DT_SINGLELINE | DT_VCENTER);
-        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 24, phonePortrait ? phonePortrait : icons[0], 32, 32, 0, NULL, DI_NORMAL);
+        {
+            SidebarLayout sidebar = sidebar_layout(height, groupCollapsed[0], groupCollapsed[1], groupCollapsed[2]);
+            if (!groupCollapsed[0]) {
+                SetRect(&panel, 12, sidebar.devicesTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.devicesTop + 26 + sidebar.devicesBody);
+                theme_panel(dc, &panel, FALSE);
+            }
+            if (!groupCollapsed[1]) {
+                SetRect(&panel, 12, sidebar.filesTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.filesTop + 26 + sidebar.filesBody);
+                theme_panel(dc, &panel, FALSE);
+            }
+            if (!groupCollapsed[2]) {
+                SetRect(&panel, 12, sidebar.otherTop + 26, DEVICE_PANE_WIDTH - 12, sidebar.otherTop + 26 + sidebar.otherBody);
+                theme_panel(dc, &panel, FALSE);
+            }
+        }
+        DrawIconEx(dc, DEVICE_PANE_WIDTH + 20, 24, icons[0], 32, 32, 0, NULL, DI_NORMAL);
         RestoreDC(dc, -1);
         SelectObject(dc, oldFont);
         EndPaint(window, &paint);
@@ -1027,6 +1106,14 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     }
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_GROUP_DEVICES:
+        case ID_GROUP_FILES:
+        case ID_GROUP_OTHER: {
+            int group = LOWORD(wParam) - ID_GROUP_DEVICES;
+            groupCollapsed[group] = !groupCollapsed[group];
+            layout(window);
+            break;
+        }
         case ID_AUTOCONNECT:
         case ID_START_TRAY:
         case ID_AUTOSTART: {
@@ -1180,10 +1267,12 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     common.dwICC = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_BAR_CLASSES | ICC_ANIMATE_CLASS;
     if (!InitCommonControlsEx(&common)) return 1;
     icons[0] = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 32, 32, 0);
-    icons[1] = loadSystemIcon(4, 102, 16);
-    icons[2] = loadSystemIcon(22, 103, 16);
-    icons[3] = loadSystemIcon(1, 104, 16);
-    phonePortrait = loadPhoneIcon(32);
+    icons[1] = loadSystemIcon(4, 102, 32);
+    icons[2] = loadSystemIcon(22, 103, 32);
+    icons[3] = loadSystemIcon(1, 104, 32);
+    taskIcons[0] = loadSystemIcon(4, 102, 16);
+    taskIcons[1] = loadSystemIcon(22, 103, 16);
+    taskIcons[2] = loadSystemIcon(1, 104, 16);
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     ZeroMemory(&cls, sizeof(cls));
     cls.cbSize = sizeof(cls);
@@ -1192,7 +1281,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
     cls.hIcon = icons[0];
     cls.hIconSm = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 16, 16, 0);
-    cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+    cls.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
     cls.lpszClassName = L"ConnectXP.MainWindow";
     if (!RegisterClassExW(&cls)) return 1;
     window = CreateWindowExW(0, cls.lpszClassName, L"ConnectXP", WS_OVERLAPPEDWINDOW,
@@ -1218,9 +1307,10 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     DeleteObject(normalFont);
     DeleteObject(titleFont);
     DeleteObject(groupFont);
+    DeleteObject(linkFont);
     for (index = 0; index < 4; ++index) DestroyIcon(icons[index]);
+    for (index = 0; index < 3; ++index) DestroyIcon(taskIcons[index]);
     DestroyIcon(cls.hIconSm);
-    if (phonePortrait) DestroyIcon(phonePortrait);
     if (singleton) CloseHandle(singleton);
     return result == -1 ? 1 : (int)message.wParam;
 }

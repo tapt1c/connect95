@@ -2,15 +2,18 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.0 introduces an Explorer-style task pane, compact themed action buttons,
+Version 0.11.1 introduces an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (880×560 initially, minimum 800×520),
-and a separate IE6-inspired file transfer window. English and Russian interfaces
+and a separate IE6-inspired file transfer window. The white work area and
+collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
+links with a hand cursor and underlined hover text. The sidebar background and
+link colors are read from the ExplorerBar theme, with flat system-color fallbacks. English and Russian interfaces
 are available. Buttons and task groups use the installed Windows theme, with
 system-color fallbacks for classic Windows and unavailable theme resources.
 Theme and system-color changes are applied while the program is running.
 
 The application icon was supplied by Daniel Myslivets and is retained in the
-executable, window title bars, About dialog and primary tray icon. Action and
+executable, window title bars, main header, About dialog and primary tray icon. Action and
 phone icons come from the installed Windows shell and telephony DLLs, with
 embedded fallback icons. No Windows DLLs are distributed. The About dialog uses
 `ShellAboutW`. Background painting excludes child controls, and unchanged labels
@@ -128,10 +131,17 @@ length. Unknown-size streams have no total or remaining-time estimate. Closing
 the window hides it while transfer continues; Cancel stops the transfer.
 On systems providing the shell AVI copy resource, the window plays that system
 animation during transfer. No animation asset is distributed.
-**File → Transfer history** reopens the window. The newest 64 results (received
+**File → Transfer history** opens the separate history window. The newest 64 results (received
 and sent, timestamp, filename and outcome) are saved in
 `%APPDATA%\Connect95\transfers.json` and restored at startup. **Open folder**
 opens the received-files directory without opening a received file.
+
+The transfer popup contains only the current file, status, progress and actions.
+On completion it hides the progress bar, shrinks its client area and changes
+Cancel to an enabled Close button. The separate resizable history window uses
+File, Direction, Date and Result columns, with the full filename and result
+available in a scrollable detail pane. Selecting Transfer history never opens
+an idle download popup.
 
 **Find phone** sends `kdeconnect.findmyphone.request` to the paired phone.
 The phone's KDE Connect plugins must be enabled for these features.
@@ -246,7 +256,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.0 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.1 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -309,7 +319,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.0 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.1 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,

@@ -7,8 +7,8 @@ IDI_APP ICON "connectxp.ico"
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,11,0,0
-PRODUCTVERSION 0,11,0,0
+FILEVERSION 0,11,1,0
+PRODUCTVERSION 0,11,1,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,7 +18,7 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "ConnectXP\0"
    VALUE "ProductName", "ConnectXP\0"
-   VALUE "FileVersion", "0.11.0\0"
+   VALUE "FileVersion", "0.11.1\0"
   END
  END
  BLOCK "VarFileInfo"

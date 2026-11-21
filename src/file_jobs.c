@@ -1,6 +1,7 @@
 #include "file_jobs.h"
 #include "transfer.h"
 #include "language.h"
+#include "sidebar_layout.h"
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
@@ -12,7 +13,10 @@ static WCHAR queue[JOB_LIMIT][MAX_PATH];
 static int queued, historyCount;
 static char queuePeer[39];
 static TransferRecord history[JOB_LIMIT];
-static HWND dialog, nameLabel, detailLabel, meter, cancelButton, folderButton, historyList;
+static HWND dialog, nameLabel, detailLabel, meter, cancelButton, folderButton;
+static HWND historyDialog, historyList, historyDetail, historyHint, historyFolder, historyClose;
+static BOOL updatingHistory, animationAvailable;
+static int lastLayoutMode = -1;
 static HWND animation;
 static HMODULE shellResources;
 static BOOL animationPlaying;
@@ -205,87 +209,229 @@ void jobs_recent(WCHAR *text, int capacity)
     }
 }
 
+static void history_details(void)
+{
+    WCHAR text[1100];
+    int selected = ListView_GetNextItem(historyList, -1, LVNI_SELECTED);
+    if (selected < 0 || selected >= historyCount) {
+        set_text(historyDetail, tr(historyCount ? L"Select a transfer to view its details." : L"No completed transfers"));
+        return;
+    }
+    wsprintfW(text, L"%s\r\n%s", history[selected].name, tr(history[selected].result));
+    set_text(historyDetail, text);
+}
+
 static void fill_history(void)
 {
     int i;
-    WCHAR line[1024];
     if (!historyList) return;
+    updatingHistory = TRUE;
     SendMessageW(historyList, WM_SETREDRAW, FALSE, 0);
-    SendMessageW(historyList, LB_RESETCONTENT, 0, 0);
+    ListView_DeleteAllItems(historyList);
     for (i = 0; i < historyCount; ++i) {
-        history_line(i, line);
-        SendMessageW(historyList, LB_ADDSTRING, 0, (LPARAM)line);
+        LVITEMW item;
+        WCHAR date[40];
+        const TransferRecord *record = &history[i];
+        ZeroMemory(&item, sizeof(item));
+        item.mask = LVIF_TEXT;
+        item.iItem = i;
+        item.pszText = history[i].name;
+        SendMessageW(historyList, LVM_INSERTITEMW, 0, (LPARAM)&item);
+        item.iSubItem = 1;
+        item.pszText = (LPWSTR)tr(record->receiving ? L"Received" : L"Sent");
+        SendMessageW(historyList, LVM_SETITEMTEXTW, i, (LPARAM)&item);
+        wsprintfW(date, L"%02u.%02u.%04u %02u:%02u", record->time.wDay, record->time.wMonth,
+            record->time.wYear, record->time.wHour, record->time.wMinute);
+        item.iSubItem = 2; item.pszText = date;
+        SendMessageW(historyList, LVM_SETITEMTEXTW, i, (LPARAM)&item);
+        item.iSubItem = 3; item.pszText = (LPWSTR)tr(record->succeeded ? L"Completed" : L"Failed or cancelled");
+        SendMessageW(historyList, LVM_SETITEMTEXTW, i, (LPARAM)&item);
     }
-    SendMessageW(historyList, LB_SETHORIZONTALEXTENT, 1800, 0);
+    if (historyCount) ListView_SetItemState(historyList, 0, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     SendMessageW(historyList, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(historyList, NULL, TRUE);
+    updatingHistory = FALSE;
+    history_details();
+}
+
+static void history_layout(HWND window)
+{
+    RECT area;
+    int width, height, available;
+    GetClientRect(window, &area);
+    width = area.right; height = area.bottom;
+    available = width - 24;
+    MoveWindow(historyHint, 12, 12, available, 20, TRUE);
+    MoveWindow(historyList, 12, 40, available, height - 148, TRUE);
+    MoveWindow(historyDetail, 12, height - 96, available, 52, TRUE);
+    MoveWindow(historyFolder, 12, height - 32, 140, 24, TRUE);
+    MoveWindow(historyClose, width - 102, height - 32, 90, 24, TRUE);
+    ListView_SetColumnWidth(historyList, 0, available * 34 / 100);
+    ListView_SetColumnWidth(historyList, 1, available * 16 / 100);
+    ListView_SetColumnWidth(historyList, 2, 128);
+    ListView_SetColumnWidth(historyList, 3, available - available * 34 / 100 - available * 16 / 100 - 150);
+}
+
+static LRESULT CALLBACK history_proc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == DM_GETDEFID) return MAKELRESULT(3, DC_HASDEFID);
+    if (message == WM_CREATE) {
+        HINSTANCE instance = GetModuleHandleW(NULL);
+        HWND child;
+        LVCOLUMNW column;
+        const WCHAR *columns[] = {L"File", L"Direction", L"Date", L"Result"};
+        int i;
+        historyHint = CreateWindowW(L"STATIC", tr(L"Select a transfer to view its details."), WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0, window, NULL, instance, NULL);
+        historyList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+            0, 0, 0, 0, window, NULL, instance, NULL);
+        historyDetail = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL,
+            0, 0, 0, 0, window, NULL, instance, NULL);
+        historyFolder = CreateWindowW(L"BUTTON", tr(L"Open folder"), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 0, 0, window, (HMENU)1, instance, NULL);
+        historyClose = CreateWindowW(L"BUTTON", tr(L"Close"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 0, 0, window, (HMENU)3, instance, NULL);
+        ListView_SetExtendedListViewStyle(historyList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        for (child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) SendMessageW(child, WM_SETFONT, (WPARAM)dialogFont, TRUE);
+        ZeroMemory(&column, sizeof(column));
+        column.mask = LVCF_TEXT | LVCF_WIDTH;
+        column.cx = 140;
+        for (i = 0; i < 4; ++i) {
+            column.pszText = (LPWSTR)tr(columns[i]);
+            SendMessageW(historyList, LVM_INSERTCOLUMNW, i, (LPARAM)&column);
+        }
+        fill_history();
+        return 0;
+    }
+    if (message == WM_SIZE) { if (wParam != SIZE_MINIMIZED && historyList) history_layout(window); return 0; }
+    if (message == WM_GETMINMAXINFO) {
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.x = 640;
+        ((MINMAXINFO *)lParam)->ptMinTrackSize.y = 340;
+        return 0;
+    }
+    if (message == WM_NOTIFY && !updatingHistory && ((NMHDR *)lParam)->hwndFrom == historyList &&
+        ((NMHDR *)lParam)->code == LVN_ITEMCHANGED) { history_details(); return 0; }
+    if (message == WM_COMMAND) {
+        if (LOWORD(wParam) == 1) jobs_open_folder(window);
+        else if (LOWORD(wParam) == 3 || LOWORD(wParam) == IDCANCEL) DestroyWindow(window);
+        return 0;
+    }
+    if (message == WM_DESTROY) {
+        historyDialog = historyList = historyDetail = historyHint = historyFolder = historyClose = NULL;
+        return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+static void transfer_layout(BOOL busy)
+{
+    TransferWindowLayout layout = transfer_window_layout(busy);
+    RECT outer = {0, 0, 540, layout.clientHeight};
+    RECT client;
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    int buttonY = layout.buttonTop;
+    BOOL animated = busy && animationAvailable;
+    GetClientRect(dialog, &client);
+    if (lastLayoutMode == (int)busy && client.bottom == outer.bottom) return;
+    lastLayoutMode = busy;
+    MoveWindow(nameLabel, 20, 16, animated ? 340 : 500, 34, TRUE);
+    MoveWindow(detailLabel, 20, 60, 500, 56, TRUE);
+    MoveWindow(meter, 20, 126, 500, 18, TRUE);
+    MoveWindow(folderButton, 20, buttonY, 140, 26, TRUE);
+    MoveWindow(cancelButton, 380, buttonY, 140, 26, TRUE);
+    ShowWindow(meter, layout.showProgress ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(animation, animated ? SW_SHOWNA : SW_HIDE);
+    GetClientRect(dialog, &client);
+    if (client.bottom != outer.bottom && !IsIconic(dialog)) {
+        AdjustWindowRectEx(&outer, style, FALSE, WS_EX_CONTROLPARENT);
+        SetWindowPos(dialog, NULL, 0, 0, outer.right - outer.left, outer.bottom - outer.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 static LRESULT CALLBACK transfer_proc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == DM_GETDEFID) return MAKELRESULT(2, DC_HASDEFID);
     if (message == WM_CREATE) {
         HINSTANCE instance = GetModuleHandleW(NULL);
         HWND child;
         WCHAR path[MAX_PATH];
         UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
-        nameLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 20, 20, 340, 48, window, NULL, instance, NULL);
-        animation = CreateWindowW(ANIMATE_CLASSW, L"", WS_CHILD | ACS_TRANSPARENT | ACS_CENTER, 380, 12, 140, 60, window, NULL, instance, NULL);
+        nameLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS, 20, 16, 340, 34, window, NULL, instance, NULL);
+        animation = CreateWindowW(ANIMATE_CLASSW, L"", WS_CHILD | ACS_TRANSPARENT | ACS_CENTER, 380, 4, 140, 50, window, NULL, instance, NULL);
         if (length && length + 13 < ARRAYSIZE(path)) {
             lstrcatW(path, L"\\shell32.dll");
             shellResources = LoadLibraryExW(path, NULL, LOAD_LIBRARY_AS_DATAFILE);
-            /* XP shell copy animation. Newer Windows may omit this resource. */
-            if (shellResources && FindResourceW(shellResources, MAKEINTRESOURCEW(161), L"AVI") &&
-                SendMessageW(animation, ACM_OPENW, (WPARAM)shellResources, (LPARAM)MAKEINTRESOURCEW(161))) ShowWindow(animation, SW_SHOWNA);
+            animationAvailable = shellResources && FindResourceW(shellResources, MAKEINTRESOURCEW(161), L"AVI") &&
+                SendMessageW(animation, ACM_OPENW, (WPARAM)shellResources, (LPARAM)MAKEINTRESOURCEW(161));
         }
-        detailLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 20, 82, 500, 66, window, NULL, instance, NULL);
-        meter = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD | WS_VISIBLE, 20, 156, 500, 20, window, NULL, instance, NULL);
-        folderButton = CreateWindowW(L"BUTTON", tr(L"Open folder"), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 20, 190, 140, 26, window, (HMENU)1, instance, NULL);
-        cancelButton = CreateWindowW(L"BUTTON", tr(L"Cancel"), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 380, 190, 140, 26, window, (HMENU)2, instance, NULL);
-        historyList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP | LBS_NOINTEGRALHEIGHT,
-            20, 238, 500, 140, window, NULL, instance, NULL);
+        detailLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 20, 60, 500, 56, window, NULL, instance, NULL);
+        meter = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD | WS_VISIBLE, 20, 126, 500, 18, window, NULL, instance, NULL);
+        folderButton = CreateWindowW(L"BUTTON", tr(L"Open folder"), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 20, 166, 140, 26, window, (HMENU)1, instance, NULL);
+        cancelButton = CreateWindowW(L"BUTTON", tr(L"Cancel"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 380, 166, 140, 26, window, (HMENU)2, instance, NULL);
         for (child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) SendMessageW(child, WM_SETFONT, (WPARAM)dialogFont, TRUE);
-        fill_history();
         return 0;
     }
     if (message == WM_COMMAND) {
         if (LOWORD(wParam) == 1) jobs_open_folder(window);
-        if (LOWORD(wParam) == 2) jobs_cancel();
+        else if (LOWORD(wParam) == 2) {
+            SessionStatus snapshot;
+            session_status(&snapshot);
+            if (snapshot.transferActive || queued) jobs_cancel();
+            else { suppressed = TRUE; ShowWindow(window, SW_HIDE); }
+        } else if (LOWORD(wParam) == IDCANCEL) SendMessageW(window, WM_CLOSE, 0, 0);
         return 0;
     }
     if (message == WM_CLOSE) { suppressed = TRUE; ShowWindow(window, SW_HIDE); return 0; }
     if (message == WM_DESTROY) {
         if (animation) SendMessageW(animation, ACM_OPENW, 0, 0);
         if (shellResources) FreeLibrary(shellResources);
-        shellResources = NULL; animationPlaying = FALSE;
-        dialog = animation = nameLabel = detailLabel = meter = historyList = cancelButton = folderButton = NULL;
+        shellResources = NULL; animationPlaying = animationAvailable = FALSE; lastLayoutMode = -1;
+        dialog = animation = nameLabel = detailLabel = meter = cancelButton = folderButton = NULL;
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+static BOOL register_jobs_class(HWND owner, const WCHAR *name, WNDPROC procedure)
+{
+    WNDCLASSW cls;
+    ZeroMemory(&cls, sizeof(cls));
+    cls.hInstance = GetModuleHandleW(NULL);
+    cls.lpfnWndProc = procedure;
+    cls.hIcon = (HICON)GetClassLongPtrW(owner, GCLP_HICON);
+    cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+    cls.lpszClassName = name;
+    return RegisterClassW(&cls) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
 void jobs_show(HWND owner, HFONT font)
 {
-    if (!dialog) {
-        WNDCLASSW cls;
-        ZeroMemory(&cls, sizeof(cls));
-        cls.hInstance = GetModuleHandleW(NULL);
-        cls.lpfnWndProc = transfer_proc;
-        cls.hIcon = (HICON)GetClassLongPtrW(owner, GCLP_HICON);
-        cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
-        cls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-        cls.lpszClassName = L"ConnectXP.FileTransfer";
-        if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
-        dialogFont = font;
-        dialog = CreateWindowExW(WS_EX_CONTROLPARENT, cls.lpszClassName, tr(L"File transfer — ConnectXP"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 560, 440, owner, NULL, cls.hInstance, NULL);
+    dialogFont = font;
+    if (!historyDialog) {
+        if (!register_jobs_class(owner, L"ConnectXP.TransferHistory", history_proc)) return;
+        historyDialog = CreateWindowExW(WS_EX_CONTROLPARENT, L"ConnectXP.TransferHistory", tr(L"Transfer history — ConnectXP"),
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 420, owner, NULL, GetModuleHandleW(NULL), NULL);
     }
-    suppressed = FALSE;
+    if (historyDialog) { ShowWindow(historyDialog, SW_RESTORE); SetForegroundWindow(historyDialog); }
+}
+
+static void show_transfer(HWND owner, HFONT font)
+{
+    if (!dialog) {
+        RECT outer = {0, 0, 540, 206};
+        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        if (!register_jobs_class(owner, L"ConnectXP.FileTransfer", transfer_proc)) return;
+        dialogFont = font;
+        AdjustWindowRectEx(&outer, style, FALSE, WS_EX_CONTROLPARENT);
+        dialog = CreateWindowExW(WS_EX_CONTROLPARENT, L"ConnectXP.FileTransfer", tr(L"File transfer — ConnectXP"),
+            style, CW_USEDEFAULT, CW_USEDEFAULT, outer.right - outer.left, outer.bottom - outer.top, owner, NULL, GetModuleHandleW(NULL), NULL);
+    }
     if (dialog) ShowWindow(dialog, SW_SHOWNOACTIVATE);
 }
 
 void jobs_tick(HWND owner, HFONT font, const SessionStatus *snapshot)
 {
     TransferRecord record;
+    SessionStatus current = *snapshot;
     BOOL changed = FALSE;
     while (session_transfer_record(&record)) {
         if (historyCount == JOB_LIMIT) --historyCount;
@@ -295,50 +441,78 @@ void jobs_tick(HWND owner, HFONT font, const SessionStatus *snapshot)
         changed = TRUE;
     }
     if (changed) { save_history(); fill_history(); }
-    if (changed && !suppressed && owner) jobs_show(owner, font);
-    if (queued && (snapshot->phase == SESSION_ERROR || snapshot->phase == SESSION_CLOSED || strcmp(queuePeer, snapshot->deviceId))) queued = 0;
-    if (queued && snapshot->phase == SESSION_PAIRED && !snapshot->transferActive && session_send_file(queue[0])) {
+    if (queued && (current.phase == SESSION_ERROR || current.phase == SESSION_CLOSED || strcmp(queuePeer, current.deviceId))) queued = 0;
+    if (queued && current.phase == SESSION_PAIRED && !current.transferActive && session_send_file(queue[0])) {
         --queued;
         memmove(queue, queue + 1, queued * sizeof(queue[0]));
-        if (!suppressed) jobs_show(owner, font);
+        session_status(&current);
     }
-    if (snapshot->transferActive && !suppressed && (!dialog || !IsWindowVisible(dialog))) jobs_show(owner, font);
+    if ((current.transferActive || changed) && !suppressed && owner && (!dialog || !IsWindowVisible(dialog))) show_transfer(owner, font);
     if (dialog) {
         WCHAR details[768], numbers[256], caption[320];
         char stats[256];
-        DWORD elapsed = (DWORD)(GetTickCount() - snapshot->transferStarted);
+        BOOL busy = current.transferActive || queued;
+        DWORD elapsed = (DWORD)(GetTickCount() - current.transferStarted);
         double seconds = elapsed < 1000 ? 1.0 : elapsed / 1000.0;
-        double speed = snapshot->transferDone / seconds;
-        BOOL known = snapshot->transferTotal != UINT64_MAX;
-        double estimate = speed > 0 && known && snapshot->transferTotal >= snapshot->transferDone ?
-            (snapshot->transferTotal - snapshot->transferDone) / speed : 0;
+        double speed = current.transferDone / seconds;
+        BOOL known = current.transferTotal != UINT64_MAX;
+        double estimate = speed > 0 && known && current.transferTotal >= current.transferDone ?
+            (current.transferTotal - current.transferDone) / speed : 0;
         unsigned int remaining = estimate > 359999 ? 359999 : (unsigned int)estimate;
-        snprintf(stats, sizeof(stats), "%.2f / %.2f MB  |  %.1f KB/s", snapshot->transferDone / 1048576.0,
-            known ? snapshot->transferTotal / 1048576.0 : 0, speed / 1024.0);
+        transfer_layout(busy);
+        snprintf(stats, sizeof(stats), "%.2f / %.2f MB  |  %.1f KB/s", current.transferDone / 1048576.0,
+            known ? current.transferTotal / 1048576.0 : 0, speed / 1024.0);
         MultiByteToWideChar(CP_ACP, 0, stats, -1, numbers, ARRAYSIZE(numbers));
-        wsprintfW(details, L"%s\r\n%s\r\n%s %u:%02u    %s %d", tr(snapshot->transferReceiving ? L"Receiving from phone" : L"Sending to phone"), numbers,
+        wsprintfW(details, L"%s\r\n%s\r\n%s %u:%02u    %s %d", tr(current.transferReceiving ? L"Receiving from phone" : L"Sending to phone"), numbers,
             tr(L"Time left:"), remaining / 60, remaining % 60, tr(L"Queued:"), queued);
-        if (!known || !snapshot->transferDone) wsprintfW(details, L"%s\r\n%s\r\n%s —    %s %d",
-            tr(snapshot->transferReceiving ? L"Receiving from phone" : L"Sending to phone"),
+        if (!known || !current.transferDone) wsprintfW(details, L"%s\r\n%s\r\n%s —    %s %d",
+            tr(current.transferReceiving ? L"Receiving from phone" : L"Sending to phone"),
             known ? numbers : tr(L"File size is unknown"), tr(L"Time left:"), tr(L"Queued:"), queued);
-        set_text(nameLabel, snapshot->transferActive ? snapshot->transferName : tr(snapshot->transferText));
-        set_text(detailLabel, snapshot->transferActive ? details : tr(L"Transfer history"));
+        set_text(nameLabel, current.transferName[0] ? current.transferName : tr(L"File transfers"));
+        set_text(detailLabel, busy ? details : current.transferText[0] ? tr(current.transferText) : tr(L"No active transfers"));
         set_text(folderButton, tr(L"Open folder"));
-        set_text(cancelButton, tr(L"Cancel"));
-        if (snapshot->transferActive) wsprintfW(caption, L"%d%% — %.259s", snapshot->transferPercent, snapshot->transferName);
-        else lstrcpyW(caption, tr(L"File transfer — ConnectXP"));
+        set_text(cancelButton, tr(busy ? L"Cancel" : L"Close"));
+        if (busy) wsprintfW(caption, L"%d%% — %.259s", current.transferPercent, current.transferName);
+        else lstrcpyW(caption, tr(current.transferSucceeded ? L"Transfer complete — ConnectXP" : L"File transfer — ConnectXP"));
         set_text(dialog, caption);
-        if (SendMessageW(meter, PBM_GETPOS, 0, 0) != snapshot->transferPercent) SendMessageW(meter, PBM_SETPOS, snapshot->transferPercent, 0);
-        if (animationPlaying != snapshot->transferActive) {
-            if (snapshot->transferActive) SendMessageW(animation, ACM_PLAY, (WPARAM)-1, MAKELPARAM(0, -1));
+        if (SendMessageW(meter, PBM_GETPOS, 0, 0) != current.transferPercent) SendMessageW(meter, PBM_SETPOS, current.transferPercent, 0);
+        if (animationPlaying != busy) {
+            if (busy) SendMessageW(animation, ACM_PLAY, (WPARAM)-1, MAKELPARAM(0, -1));
             else SendMessageW(animation, ACM_STOP, 0, 0);
-            animationPlaying = snapshot->transferActive;
+            animationPlaying = busy;
         }
-        EnableWindow(cancelButton, snapshot->transferActive || queued);
+        EnableWindow(cancelButton, TRUE);
     }
+    /* Hiding a finished batch must not suppress future incoming transfers. */
+    if (!current.transferActive && !queued) suppressed = FALSE;
 }
 
-void jobs_close(void) { suppressed = TRUE; queued = 0; if (dialog) DestroyWindow(dialog); }
+void jobs_close(void)
+{
+    suppressed = TRUE; queued = 0;
+    if (dialog) DestroyWindow(dialog);
+    if (historyDialog) DestroyWindow(historyDialog);
+}
 void jobs_cancel(void) { queued = 0; session_cancel_transfer(); }
-BOOL jobs_message(MSG *message) { return dialog && IsDialogMessageW(dialog, message); }
-void jobs_translate(void) { fill_history(); }
+BOOL jobs_message(MSG *message)
+{
+    return (dialog && IsDialogMessageW(dialog, message)) || (historyDialog && IsDialogMessageW(historyDialog, message));
+}
+void jobs_translate(void)
+{
+    if (historyDialog) {
+        LVCOLUMNW column;
+        const WCHAR *columns[] = {L"File", L"Direction", L"Date", L"Result"};
+        int i;
+        set_text(historyDialog, tr(L"Transfer history — ConnectXP"));
+        set_text(historyHint, tr(L"Select a transfer to view its details."));
+        set_text(historyFolder, tr(L"Open folder"));
+        set_text(historyClose, tr(L"Close"));
+        ZeroMemory(&column, sizeof(column)); column.mask = LVCF_TEXT;
+        for (i = 0; i < 4; ++i) {
+            column.pszText = (LPWSTR)tr(columns[i]);
+            SendMessageW(historyList, LVM_SETCOLUMNW, i, (LPARAM)&column);
+        }
+        fill_history();
+    }
+}

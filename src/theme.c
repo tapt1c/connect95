@@ -1,15 +1,19 @@
 #include "theme.h"
 #include <uxtheme.h>
 #include <vsstyle.h>
+#include <vssym32.h>
 
 typedef HTHEME (WINAPI *OpenTheme)(HWND, LPCWSTR);
 typedef HRESULT (WINAPI *CloseTheme)(HTHEME);
 typedef HRESULT (WINAPI *DrawTheme)(HTHEME, HDC, int, int, const RECT *, const RECT *);
+typedef HRESULT (WINAPI *ThemeColor)(HTHEME, int, int, int, COLORREF *);
 static HMODULE library;
 static HTHEME explorer, button;
 static OpenTheme openTheme;
 static CloseTheme closeTheme;
 static DrawTheme drawTheme;
+static ThemeColor themeColor;
+static COLORREF bodyColor, linkColor;
 
 void theme_close(void)
 {
@@ -23,6 +27,8 @@ void theme_close(void)
 void theme_refresh(HWND window)
 {
     theme_close();
+    bodyColor = GetSysColor(COLOR_WINDOW);
+    linkColor = GetSysColor(COLOR_HOTLIGHT);
     if (!library) {
         WCHAR path[MAX_PATH];
         UINT length = GetSystemDirectoryW(path, ARRAYSIZE(path));
@@ -33,10 +39,28 @@ void theme_refresh(HWND window)
         openTheme = (OpenTheme)(void *)GetProcAddress(library, "OpenThemeData");
         closeTheme = (CloseTheme)(void *)GetProcAddress(library, "CloseThemeData");
         drawTheme = (DrawTheme)(void *)GetProcAddress(library, "DrawThemeBackground");
+        themeColor = (ThemeColor)(void *)GetProcAddress(library, "GetThemeColor");
     }
     if (openTheme && closeTheme && drawTheme) {
         explorer = openTheme(window, L"ExplorerBar");
         button = openTheme(window, L"Button");
+        if (explorer) {
+            if (themeColor) themeColor(explorer, EBP_NORMALGROUPBACKGROUND, 0, TMT_FILLCOLOR, &bodyColor);
+            /* Image-backed parts may inherit a FILLCOLOR they never paint. */
+            {
+                HDC screen = GetDC(window), sample = CreateCompatibleDC(screen);
+                HBITMAP bitmap = CreateCompatibleBitmap(screen, 64, 64);
+                HGDIOBJ previous = SelectObject(sample, bitmap);
+                RECT area = {0, 0, 64, 64};
+                FillRect(sample, &area, GetSysColorBrush(COLOR_WINDOW));
+                if (SUCCEEDED(drawTheme(explorer, sample, EBP_NORMALGROUPBACKGROUND, 0, &area, NULL))) {
+                    COLORREF pixel = GetPixel(sample, 32, 32);
+                    if (pixel != CLR_INVALID) bodyColor = pixel;
+                }
+                SelectObject(sample, previous); DeleteObject(bitmap); DeleteDC(sample); ReleaseDC(window, screen);
+            }
+            if (themeColor) themeColor(explorer, EBP_NORMALGROUPHEAD, 0, TMT_TEXTCOLOR, &linkColor);
+        }
     }
 }
 
@@ -52,20 +76,54 @@ void theme_panel(HDC dc, const RECT *rect, BOOL header)
 
 void theme_sidebar(HDC dc, const RECT *rect)
 {
-    int band;
-    COLORREF top = GetSysColor(COLOR_GRADIENTACTIVECAPTION), bottom = GetSysColor(COLOR_ACTIVECAPTION);
-    if (!explorer) { FillRect(dc, rect, GetSysColorBrush(COLOR_BTNFACE)); return; }
-    for (band = 0; band < 32; ++band) {
-        RECT strip = *rect;
-        HBRUSH brush;
-        strip.top = rect->top + (rect->bottom - rect->top) * band / 32;
-        strip.bottom = rect->top + (rect->bottom - rect->top) * (band + 1) / 32;
-        brush = CreateSolidBrush(RGB((GetRValue(top) * (31 - band) + GetRValue(bottom) * band) / 31,
-            (GetGValue(top) * (31 - band) + GetGValue(bottom) * band) / 31,
-            (GetBValue(top) * (31 - band) + GetBValue(bottom) * band) / 31));
-        FillRect(dc, &strip, brush);
-        DeleteObject(brush);
+    /* ExplorerBar owns these colors; caption colors are unrelated on XP. */
+    if (explorer && SUCCEEDED(drawTheme(explorer, dc, EBP_HEADERBACKGROUND, 0, rect, NULL))) return;
+    FillRect(dc, rect, GetSysColorBrush(COLOR_BTNFACE));
+}
+
+COLORREF theme_body_color(void)
+{
+    return bodyColor;
+}
+
+COLORREF theme_link_color(void)
+{
+    return linkColor;
+}
+
+void theme_link_background(HDC dc, const RECT *rect)
+{
+    /* A link fills just the group's interior, never its themed border. */
+    HBRUSH brush = CreateSolidBrush(theme_body_color());
+    FillRect(dc, rect, brush);
+    DeleteObject(brush);
+}
+
+void theme_group_header(HDC dc, const RECT *rect, const WCHAR *text, HFONT font, BOOL collapsed, BOOL focused)
+{
+    RECT label = *rect, arrow = *rect;
+    HGDIOBJ previous = SelectObject(dc, font);
+    theme_panel(dc, rect, TRUE);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, theme_link_color());
+    label.left += 10;
+    label.right -= 30;
+    DrawTextW(dc, text, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    arrow.left = arrow.right - 25;
+    InflateRect(&arrow, -4, -4);
+    if (!explorer || FAILED(drawTheme(explorer, dc, collapsed ? EBP_NORMALGROUPEXPAND : EBP_NORMALGROUPCOLLAPSE, 1, &arrow, NULL))) {
+        POINT points[3];
+        HPEN pen = CreatePen(PS_SOLID, 1, theme_link_color());
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        int center = (arrow.top + arrow.bottom) / 2, x = (arrow.left + arrow.right) / 2;
+        points[0].x = x - 4; points[0].y = center + (collapsed ? -2 : 2);
+        points[1].x = x; points[1].y = center + (collapsed ? 2 : -2);
+        points[2].x = x + 4; points[2].y = points[0].y;
+        Polyline(dc, points, 3);
+        SelectObject(dc, oldPen); DeleteObject(pen);
     }
+    if (focused) { InflateRect(&label, -2, -3); DrawFocusRect(dc, &label); }
+    SelectObject(dc, previous);
 }
 
 void theme_button(HDC dc, const RECT *rect, BOOL pressed, BOOL disabled, BOOL focused)

@@ -2,9 +2,21 @@
 from itertools import combinations
 from pathlib import Path
 import re
+import os
+import subprocess
+from types import SimpleNamespace
 
 
 def check_layout(source):
+    root = Path(__file__).resolve().parents[1]
+    executable = root / "build/sidebar-layout-test"
+    subprocess.run([os.environ.get("HOST_CC", "cc"), "-std=c99", "-Wall", "-Wextra", "-Werror", "-Isrc",
+                    "tests/sidebar_layout_test.c", "-o", str(executable)], cwd=root, check=True)
+    sidebar_values = {}
+    for line in subprocess.check_output([str(executable)], text=True).splitlines():
+        height, *values = map(int, line.split())
+        sidebar_values[height] = SimpleNamespace(**dict(zip(
+            ("devicesTop", "devicesBody", "filesTop", "filesBody", "otherTop", "otherBody"), values)))
     layout = source.split("static void layout(HWND window)", 1)[1].split(
         "static void drawButton", 1
     )[0]
@@ -14,6 +26,7 @@ def check_layout(source):
     for width in (760, 780, 800, 880, 1024, 1920):
         for height in (440, 460, 480, 700, 1000):
             values = {"width": width, "height": height, "DEVICE_PANE_WIDTH": pane_width}
+            values["sidebar"] = sidebar_values[height]
             # Read the real layout calculations so this checks the implementation.
             for name, expression in re.findall(
                 r"^    (left|rightX|rightWidth|buttonWidth|buttonY) = ([^;]+);", layout, re.M
