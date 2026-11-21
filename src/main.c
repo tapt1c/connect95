@@ -53,6 +53,29 @@ static HTREEITEM savedGroup, discoveredGroup, peerNodes[MAX_PEERS];
 static BOOL peerSaved[MAX_PEERS], peerSeen[MAX_PEERS], peerConnected[MAX_PEERS];
 static HIMAGELIST deviceImages;
 
+/* The session is polled every 500 ms. Updating unchanged STATIC text erases
+   its background and needlessly repaints nearby themed controls on XP. */
+static void setControlText(HWND control, const WCHAR *text)
+{
+    WCHAR previous[512];
+    int length = lstrlenW(text);
+    if (length < (int)ARRAYSIZE(previous) && GetWindowTextLengthW(control) == length &&
+        GetWindowTextW(control, previous, ARRAYSIZE(previous)) == length && !lstrcmpW(previous, text)) return;
+    SetWindowTextW(control, text);
+}
+
+static void setStatusText(const WCHAR *text)
+{
+    WCHAR previous[512];
+    int length = lstrlenW(text);
+    if (length < (int)ARRAYSIZE(previous) &&
+        LOWORD(SendMessageW(statusBar, SB_GETTEXTLENGTHW, 0, 0)) == length) {
+        SendMessageW(statusBar, SB_GETTEXTW, 0, (LPARAM)previous);
+        if (!lstrcmpW(previous, text)) return;
+    }
+    SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)text);
+}
+
 static int selectedPeer(void)
 {
     TVITEMW item;
@@ -148,54 +171,53 @@ static void showPeer(void)
     EnableMenuItem(GetMenu(GetParent(devices)), ID_SYNC_CLIPBOARD, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     if (paired && session.batteryCharge >= 0) {
         wsprintfW(description, tr(L"Battery %d%%%s"), session.batteryCharge, session.batteryCharging ? tr(L" (charging)") : L"");
-        SetWindowTextW(battery, description);
-    } else SetWindowTextW(battery, tr(L"Battery —"));
+        setControlText(battery, description);
+    } else setControlText(battery, tr(L"Battery —"));
     EnableWindow(cancelTransferButton, paired && session.transferActive);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_SEND, MF_BYCOMMAND | (paired && !session.transferActive ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(GetMenu(GetParent(devices)), ID_RING, MF_BYCOMMAND | (paired ? MF_ENABLED : MF_GRAYED));
     if (selected < 0 || selected >= peerCount) {
         EnableWindow(pairButton, FALSE);
-        SetWindowTextW(heading, L"ConnectXP");
-        SetWindowTextW(state, tr(L"Select a device from either group."));
-        SetWindowTextW(transferText, tr(L"No active transfers"));
+        setControlText(heading, L"ConnectXP");
+        setControlText(state, tr(L"Select a device from either group."));
+        setControlText(transferText, tr(L"No active transfers"));
         SendMessageW(progress, PBM_SETPOS, 0, 0);
         EnableMenuItem(GetMenu(GetParent(devices)), ID_PAIR, MF_BYCOMMAND | MF_GRAYED);
         return;
     }
-    SetWindowTextW(heading, peers[selected].name);
+    setControlText(heading, peers[selected].name);
     EnableWindow(pairButton, peers[selected].identity.version == 7 && peers[selected].address[0]);
     EnableMenuItem(GetMenu(GetParent(devices)), ID_PAIR, MF_BYCOMMAND |
                    (peers[selected].identity.version == 7 && peers[selected].address[0] ? MF_ENABLED : MF_GRAYED));
     if (!strcmp(session.deviceId, peers[selected].identity.id) && session.phase != SESSION_IDLE) {
-        SetWindowTextW(state, language_status(session.text, localizedStatus, ARRAYSIZE(localizedStatus)));
-        SetWindowTextW(transferText, session.transferText[0] ? tr(session.transferText) : tr(L"No active transfers"));
+        setControlText(state, language_status(session.text, localizedStatus, ARRAYSIZE(localizedStatus)));
+        setControlText(transferText, session.transferText[0] ? tr(session.transferText) : tr(L"No active transfers"));
         SendMessageW(progress, PBM_SETPOS, session.transferPercent, 0);
         if (session.code[0] && (session.phase == SESSION_WAIT_PHONE || session.phase == SESSION_CONFIRM)) {
             wsprintfW(description, tr(L"Pairing code %s — compare it with your phone"), session.code);
-            SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
+            setStatusText(description);
         } else if (session.phase == SESSION_PAIRED) {
             if (session.clipboardRevision) {
                 wsprintfW(description, tr(L"Phone clipboard received at %02u:%02u:%02u. Use Edit to copy it to Windows."),
                           session.clipboardReceived.wHour, session.clipboardReceived.wMinute, session.clipboardReceived.wSecond);
-                SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
-            } else SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)tr(L"Waiting for phone clipboard. Use Send clipboard in KDE Connect on the phone."));
-        } else SendMessageW(statusBar, SB_SETTEXTW, 0,
-                           (LPARAM)language_status(session.text, localizedStatus, ARRAYSIZE(localizedStatus)));
+                setStatusText(description);
+            } else setStatusText(tr(L"Waiting for phone clipboard. Use Send clipboard in KDE Connect on the phone."));
+        } else setStatusText(language_status(session.text, localizedStatus, ARRAYSIZE(localizedStatus)));
         return;
     }
-    SetWindowTextW(transferText, tr(L"No active transfers"));
+    setControlText(transferText, tr(L"No active transfers"));
     SendMessageW(progress, PBM_SETPOS, 0, 0);
     if (peerSaved[selected] && !peerSeen[selected]) {
-        SetWindowTextW(state, peers[selected].address[0] ? tr(L"Saved device. Try its last known address.") :
+        setControlText(state, peers[selected].address[0] ? tr(L"Saved device. Try its last known address.") :
                                                      tr(L"Saved device. Refresh discovery on the phone."));
     } else if ((DWORD)(GetTickCount() - peers[selected].seen) > 120000)
-        SetWindowTextW(state, tr(L"Discovery is stale. Refresh devices on the phone."));
+        setControlText(state, tr(L"Discovery is stale. Refresh devices on the phone."));
     else
-        SetWindowTextW(state, tr(L"Discovered. Not connected."));
+        setControlText(state, tr(L"Discovered. Not connected."));
     wsprintfW(description, peerSaved[selected] ? tr(L"%hs:%u · Protocol %d · Saved") : tr(L"%hs:%u · Protocol %d · Not paired"),
               peers[selected].address, peers[selected].identity.port,
               peers[selected].identity.version);
-    SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)description);
+    setStatusText(description);
 }
 
 static void pairSelected(HWND window)
@@ -408,10 +430,9 @@ static void startDiscovery(HWND window)
     int error = discovery_start(window, WM_DISCOVERY);
     if (error) {
         wsprintfW(errorText, tr(L"UDP 1716 is unavailable (error %d). Restart discovery from the Device menu."), error);
-        SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)errorText);
+        setStatusText(errorText);
     } else {
-        SendMessageW(statusBar, SB_SETTEXTW, 0,
-            (LPARAM)tr(L"Listening on UDP 1716. Refresh devices in KDE Connect on your phone."));
+        setStatusText(tr(L"Listening on UDP 1716. Refresh devices in KDE Connect on your phone."));
     }
 }
 
@@ -424,8 +445,7 @@ static void receiveDiscovery(void)
     for (batch = 0; batch < 32; ++batch) {
         result = discovery_receive(&peer);
         if (result <= 0) {
-            if (result < 0) SendMessageW(statusBar, SB_SETTEXTW, 0,
-                (LPARAM)tr(L"UDP receive error. Restart discovery from the Device menu."));
+            if (result < 0) setStatusText(tr(L"UDP receive error. Restart discovery from the Device menu."));
             break;
         }
         if (result != 1) continue;
@@ -522,12 +542,12 @@ static void updateLanguage(HWND window)
     if (replacement && SetMenu(window, replacement)) DestroyMenu(previous);
     else if (replacement) DestroyMenu(replacement);
     DrawMenuBar(window);
-    SetWindowTextW(pairButton, tr(L"Pair / connect"));
-    SetWindowTextW(sendButton, tr(L"Send file"));
-    SetWindowTextW(ringButton, tr(L"Find phone"));
-    SetWindowTextW(clipboardButton, tr(L"Clipboard"));
-    SetWindowTextW(transferBox, tr(L"File transfers"));
-    SetWindowTextW(cancelTransferButton, tr(L"Cancel"));
+    setControlText(pairButton, tr(L"Pair / connect"));
+    setControlText(sendButton, tr(L"Send file"));
+    setControlText(ringButton, tr(L"Find phone"));
+    setControlText(clipboardButton, tr(L"Clipboard"));
+    setControlText(transferBox, tr(L"File transfers"));
+    setControlText(cancelTransferButton, tr(L"Cancel"));
     ZeroMemory(&item, sizeof(item));
     item.mask = TVIF_TEXT;
     item.hItem = savedGroup;
@@ -596,9 +616,11 @@ static void layout(HWND window)
     buttonY = 104;
     MoveWindow(devices, 8, 8, left, height - 16, TRUE);
     MoveWindow(heading, rightX + 44, 12, rightWidth - 44, 25, TRUE);
+    /* Keep the two-line status above the battery and pairing row. STATIC
+       background erasure can overwrite a sibling if these rectangles overlap. */
     MoveWindow(state, rightX + 44, 43, rightWidth - 44, 30, TRUE);
-    MoveWindow(battery, rightX + 44, 72, rightWidth - 220, 21, TRUE);
-    MoveWindow(pairButton, rightX + rightWidth - 170, 68, 170, 25, TRUE);
+    MoveWindow(battery, rightX + 44, 78, rightWidth - 220, 21, TRUE);
+    MoveWindow(pairButton, rightX + rightWidth - 170, 74, 170, 25, TRUE);
     MoveWindow(sendButton, rightX, buttonY, buttonWidth, 72, TRUE);
     MoveWindow(ringButton, rightX + buttonWidth + 6, buttonY, buttonWidth, 72, TRUE);
     MoveWindow(clipboardButton, rightX + (buttonWidth + 6) * 2,
@@ -714,8 +736,7 @@ static BOOL createControls(HWND window)
     cancelTransferButton = control(window, L"BUTTON", tr(L"Cancel"), BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED, ID_CANCEL_TRANSFER);
     progress = control(window, PROGRESS_CLASSW, L"", 0, 0);
     statusBar = control(window, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0);
-    SendMessageW(statusBar, SB_SETTEXTW, 0,
-        (LPARAM)tr(L"  Ready."));
+    setStatusText(tr(L"  Ready."));
     if (devices && !initializeDeviceTree()) return FALSE;
     return normalFont && titleFont && devices && heading && state && battery &&
         pairButton && sendButton && ringButton && clipboardButton && transferBox && transferText &&
@@ -760,7 +781,7 @@ static LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPA
     }
     case WM_DISCOVERY:
         if (WSAGETSELECTERROR(lParam)) {
-            SendMessageW(statusBar, SB_SETTEXTW, 0, (LPARAM)tr(L"UDP error. Restart discovery from the Device menu."));
+            setStatusText(tr(L"UDP error. Restart discovery from the Device menu."));
         } else if (WSAGETSELECTEVENT(lParam) == FD_READ) receiveDiscovery();
         return 0;
     case WM_TIMER:

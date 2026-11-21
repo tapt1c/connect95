@@ -25,6 +25,7 @@ clean:
 
 HOST_CC ?= cc
 test: | build
+	python3 tests/check_ui_layout.py
 	$(HOST_CC) -std=c99 -Wall -Wextra -Werror -DCJSON_NESTING_LIMIT=32 -Isrc tests/identity_test.c src/identity.c src/vendor/cJSON.c -o build/identity-test
 	./build/identity-test
 	$(HOST_CC) -std=c99 -Wall -Wextra -Werror -DCJSON_NESTING_LIMIT=32 -Isrc tests/notification_test.c src/notifications.c src/packet.c src/vendor/cJSON.c -o build/notification-test
