@@ -7,6 +7,12 @@ A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 · [release notes](releases/ConnectXP-1.0.0-NOTES.md)
 · [SHA-256](releases/ConnectXP-1.0.0-SHA256SUMS.txt)
 
+An [Inno Setup 5.6.1 ANSI installer script](installer/README.md) is available
+with Russian/English welcome text and terms, supplied wizard artwork and
+per-user installation. The [self-contained source kit](https://github.com/tapt1c/connect95/raw/refs/heads/main/releases/ConnectXP-1.0.0-Inno-Sources.zip)
+includes the portable EXE and all installer assets; a compiled setup has not yet
+been validated.
+
 
 Version 1.0 includes an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),

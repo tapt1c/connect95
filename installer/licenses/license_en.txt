@@ -1,0 +1,25 @@
+ConnectXP 1.0 — terms of use
+
+Author: Daniel Myslivets.
+ConnectXP is an implementation of the KDE Connect protocol for Windows XP SP3 (32-bit).
+
+1. What the program does
+ConnectXP links a computer and a phone over a local network: it transfers files, receives clipboard text and notifications, helps locate a phone and provides a multimedia remote. Available features depend on the KDE Connect version, settings and permissions on the phone. Version 1.0 supports pairing with protocol 7; support for every feature of the original KDE Connect is not guaranteed.
+
+2. Pairing and access to data
+Connect only devices you own or trust. When pairing for the first time, compare the code on the computer and phone. Clipboard text and notifications may contain personal information. You can disable the corresponding features in KDE Connect on the phone.
+
+3. Storage and removal
+The computer identity, pairing keys, device details and transfer history are stored in %APPDATA%\Connect95. This folder name is retained for compatibility with earlier versions. Settings are stored under HKEY_CURRENT_USER\Software\Connect95.
+Received files are saved to My Documents\ConnectXP. Removing the program normally keeps settings and pairings. You can choose to clear them separately; received files are always kept. After clearing pairing data, you will need to pair your devices again.
+
+4. Installation and network access
+The program is installed for the current Windows user. You can choose a desktop shortcut and startup with Windows during installation; startup can also be changed in the program. Connecting requires KDE Connect on the phone and access to a local network. Your firewall may ask you to allow network access.
+
+5. Limitations and responsibility
+The program is provided in its current state, without a guarantee of uninterrupted operation or compatibility with every device. Keep backups of important files and check transfer results. These terms do not limit user rights provided by applicable law.
+
+6. Third-party components
+ConnectXP uses cJSON and Mbed TLS. Their authorship, licenses and notices are included in THIRD-PARTY-NOTICES.txt, installed with the program. The terms for those components remain in effect; this text does not replace them.
+
+By choosing "I accept the terms", you confirm that you have read these terms of use for ConnectXP.
