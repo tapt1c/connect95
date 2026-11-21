@@ -2,13 +2,14 @@
 #include "resource.h"
 1 RT_MANIFEST "connectxp.manifest"
 IDI_APP ICON "connectxp.ico"
+IDB_BATTERY_STRIP BITMAP "battery.bmp"
 101 ICON "phone.ico"
 102 ICON "send.ico"
 103 ICON "ring.ico"
 104 ICON "clipboard.ico"
 1 VERSIONINFO
-FILEVERSION 0,11,3,0
-PRODUCTVERSION 0,11,3,0
+FILEVERSION 0,11,4,0
+PRODUCTVERSION 0,11,4,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,7 +19,7 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "ConnectXP\0"
    VALUE "ProductName", "ConnectXP\0"
-   VALUE "FileVersion", "0.11.3\0"
+   VALUE "FileVersion", "0.11.4\0"
   END
  END
  BLOCK "VarFileInfo"

@@ -1,4 +1,4 @@
-ConnectXP 0.11.3 third-party notices
+ConnectXP 0.11.4 third-party notices
 
 Mbed TLS 3.6.8, used under Apache-2.0
 https://github.com/Mbed-TLS/mbedtls
@@ -580,3 +580,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+
+Battery artwork: supplied Windows XP batmeter.dll, bitmap resource 301 (16x16 image strip).

@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.3 introduces an Explorer-style task pane, compact themed action buttons,
+Version 0.11.4 introduces an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
@@ -77,10 +77,17 @@ A session-local mutex prevents a second instance from using the same profile.
 
 ## Battery tray and multimedia remote
 
-The primary tray icon remains the custom ConnectXP artwork. A second generated
+The primary tray icon remains the custom ConnectXP artwork. A second native XP
 battery icon shows charge and charging state in its tooltip while connected.
+Its original 16×16 images come from bitmap resource 301 in the installed system
+`batmeter.dll`, opened as resource data. When that resource is unavailable or has
+a different layout, the embedded copy of the bitmap strip supplied by the user
+is used. The DLL itself is not distributed or executed. The image list is cached
+and each tray update receives its own icon handle. Levels use full (>66%), medium
+(34–66%), low (16–33%) and critical (≤15%) artwork, with separate charging images.
+The tooltip retains the exact reported percentage.
 A low-battery balloon appears at 15% or below when unplugged; charging or a rise
-above 20% resets the warning. These colors follow system colors.
+above 20% resets the warning. The battery artwork retains its original XP colors.
 
 Enable the multimedia remote in KDE Connect on the phone and select
 **Windows media keys**. Play/pause, stop, next and previous send standard Windows
@@ -287,7 +294,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.3 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.4 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -350,7 +357,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.3 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.4 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,

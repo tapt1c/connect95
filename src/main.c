@@ -7,6 +7,7 @@
 #include "sidebar_layout.h"
 #include "ui_layout.h"
 #include "ui_paint.h"
+#include "battery_icon.h"
 #include "session.h"
 #include "clipboard.h"
 #include "saved_devices.h"
@@ -430,45 +431,6 @@ static void autoConnect(const SessionStatus *snapshot)
     }
 }
 
-static HICON makeBatteryIcon(int charge, BOOL charging)
-{
-    HDC screen = GetDC(NULL), dc = CreateCompatibleDC(screen);
-    HBITMAP bitmap = CreateCompatibleBitmap(screen, 16, 16);
-    BYTE opaque[64] = {0};
-    HBITMAP mask = CreateBitmap(16, 16, 1, 1, opaque);
-    HGDIOBJ previous = SelectObject(dc, bitmap);
-    RECT box = {1, 4, 14, 13}, terminal = {14, 7, 16, 10}, fill = {3, 6, 3 + charge * 9 / 100, 11};
-    ICONINFO info;
-    HICON icon;
-    HDC maskDc = CreateCompatibleDC(screen);
-    HGDIOBJ previousMask = SelectObject(maskDc, mask);
-    FillRect(maskDc, &(RECT){0, 0, 16, 16}, (HBRUSH)GetStockObject(WHITE_BRUSH));
-    FillRect(maskDc, &box, (HBRUSH)GetStockObject(BLACK_BRUSH));
-    FillRect(maskDc, &terminal, (HBRUSH)GetStockObject(BLACK_BRUSH));
-    FillRect(dc, &(RECT){0, 0, 16, 16}, (HBRUSH)GetStockObject(BLACK_BRUSH));
-    FillRect(dc, &box, GetSysColorBrush(COLOR_WINDOW));
-    FrameRect(dc, &box, GetSysColorBrush(COLOR_BTNTEXT));
-    FillRect(dc, &terminal, GetSysColorBrush(COLOR_BTNTEXT));
-    {
-        HBRUSH brush = CreateSolidBrush(GetSysColor(charging ? COLOR_HIGHLIGHT : charge <= 15 ? COLOR_HOTLIGHT : COLOR_ACTIVECAPTION));
-        FillRect(dc, &fill, brush);
-        DeleteObject(brush);
-    }
-    if (charging) {
-        SetTextColor(dc, GetSysColor(COLOR_BTNTEXT)); SetBkMode(dc, TRANSPARENT);
-        TextOutW(dc, 5, 0, L"+", 1);
-        SetBkMode(maskDc, TRANSPARENT); SetTextColor(maskDc, RGB(0, 0, 0));
-        TextOutW(maskDc, 5, 0, L"+", 1);
-    }
-    SelectObject(dc, previous);
-    ZeroMemory(&info, sizeof(info));
-    info.fIcon = TRUE; info.hbmColor = bitmap; info.hbmMask = mask;
-    icon = CreateIconIndirect(&info);
-    SelectObject(maskDc, previousMask); DeleteDC(maskDc);
-    DeleteObject(bitmap); DeleteObject(mask); DeleteDC(dc); ReleaseDC(NULL, screen);
-    return icon;
-}
-
 static void pollBattery(HWND window, const SessionStatus *snapshot)
 {
     NOTIFYICONDATAW item;
@@ -482,7 +444,7 @@ static void pollBattery(HWND window, const SessionStatus *snapshot)
         return;
     }
     if (previousBattery != snapshot->batteryCharge || previousCharging != snapshot->batteryCharging || !batteryAdded) {
-        HICON next = makeBatteryIcon(snapshot->batteryCharge, snapshot->batteryCharging);
+        HICON next = battery_icon_load(snapshot->batteryCharge, snapshot->batteryCharging);
         ZeroMemory(&item, sizeof(item)); item.cbSize = NOTIFYICONDATAW_V2_SIZE;
         item.hWnd = window; item.uID = 2; item.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
         item.uCallbackMessage = WM_TRAY; item.hIcon = next;
@@ -1328,6 +1290,7 @@ int WINAPI WinMain(HINSTANCE current, HINSTANCE previous, LPSTR command, int sho
     for (index = 0; index < 4; ++index) DestroyIcon(icons[index]);
     for (index = 0; index < 3; ++index) DestroyIcon(taskIcons[index]);
     DestroyIcon(cls.hIconSm);
+    battery_icon_free();
     if (singleton) CloseHandle(singleton);
     return result == -1 ? 1 : (int)message.wParam;
 }
