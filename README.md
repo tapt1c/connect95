@@ -155,7 +155,8 @@ reconnect. The name is copied into the outgoing identity packet when connecting.
 
 ## Saved devices
 
-The native Win32 tree contains **Saved devices** and **Discovered devices** groups.
+The native Win32 tree contains **Saved** and **Found** groups. Their short Russian labels are «Сохранённые» and
+«Найденные», with folder/search icons from the installed shell.
 Phone icons come from the Windows telephony resources, with an embedded XP-compatible
 phone icon used when necessary. Saved devices remain visible after restart and show
 an offline marker until discovery or a successful connection in the current run.

@@ -683,10 +683,10 @@ static void updateLanguage(HWND window)
     ZeroMemory(&item, sizeof(item));
     item.mask = TVIF_TEXT;
     item.hItem = savedGroup;
-    item.pszText = (LPWSTR)tr(L"Saved devices");
+    item.pszText = (LPWSTR)tr(L"Saved");
     SendMessageW(devices, TVM_SETITEMW, 0, (LPARAM)&item);
     item.hItem = discoveredGroup;
-    item.pszText = (LPWSTR)tr(L"Discovered devices");
+    item.pszText = (LPWSTR)tr(L"Found");
     SendMessageW(devices, TVM_SETITEMW, 0, (LPARAM)&item);
     for (i = 0; i < peerCount; ++i) refreshPeerNode(i);
     notifications_ui_translate();
@@ -879,8 +879,8 @@ static BOOL initializeDeviceTree(void)
 {
     TVINSERTSTRUCTW group;
     HICON phone = loadPhoneIcon(16);
-    int i;
-    deviceImages = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 1, 1);
+    int i, savedImage, foundImage;
+    deviceImages = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 3, 1);
     if (!deviceImages || !phone) {
         if (phone) DestroyIcon(phone);
         return FALSE;
@@ -888,6 +888,11 @@ static BOOL initializeDeviceTree(void)
     i = ImageList_AddIcon(deviceImages, phone);
     DestroyIcon(phone);
     if (i < 0) return FALSE;
+    /* The image list copies the existing XP shell folder/search icons. */
+    savedImage = taskIcons[0] ? ImageList_AddIcon(deviceImages, taskIcons[0]) : -1;
+    foundImage = taskIcons[1] ? ImageList_AddIcon(deviceImages, taskIcons[1]) : -1;
+    if (savedImage < 0) savedImage = 0;
+    if (foundImage < 0) foundImage = 0;
     TreeView_SetImageList(devices, deviceImages, TVSIL_NORMAL);
     ZeroMemory(&group, sizeof(group));
     group.hParent = TVI_ROOT;
@@ -895,11 +900,13 @@ static BOOL initializeDeviceTree(void)
     group.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_STATE | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
     group.item.state = TVIS_BOLD;
     group.item.stateMask = TVIS_BOLD;
-    group.item.iImage = I_IMAGENONE;
-    group.item.iSelectedImage = I_IMAGENONE;
-    group.item.pszText = (LPWSTR)tr(L"Saved devices");
+    group.item.iImage = savedImage;
+    group.item.iSelectedImage = savedImage;
+    group.item.pszText = (LPWSTR)tr(L"Saved");
     savedGroup = (HTREEITEM)SendMessageW(devices, TVM_INSERTITEMW, 0, (LPARAM)&group);
-    group.item.pszText = (LPWSTR)tr(L"Discovered devices");
+    group.item.iImage = foundImage;
+    group.item.iSelectedImage = foundImage;
+    group.item.pszText = (LPWSTR)tr(L"Found");
     discoveredGroup = (HTREEITEM)SendMessageW(devices, TVM_INSERTITEMW, 0, (LPARAM)&group);
     if (!savedGroup || !discoveredGroup) return FALSE;
     peerCount = saved_devices_load(peers, MAX_PEERS);
