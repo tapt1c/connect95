@@ -1,5 +1,8 @@
-; Encoding: Windows-1251, no BOM, CRLF. Included by connectxp_cp1251.iss.
+#ifndef ConnectXPMainScript
+  #error Compile connectxp_cp1251.iss, not uninstall.iss.
+#endif
 [CustomMessages]
+; Encoding: Windows-1251, no BOM, CRLF. Included by connectxp_cp1251.iss.
 en.RemoveTitle=Remove ConnectXP
 ru.RemoveTitle=Удаление ConnectXP
 en.RemoveDescription=ConnectXP and its shortcuts will be removed for this Windows user. Settings and pairings are kept unless you select the option below.

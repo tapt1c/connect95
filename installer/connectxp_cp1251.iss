@@ -1,5 +1,6 @@
 ; Encoding: Windows-1251, no BOM, CRLF. Inno Setup 5.6.1 ANSI.
 ; PayloadDir may be overridden with /DPayloadDir="C:\ConnectXP".
+#define ConnectXPMainScript
 #define AppVersion "1.0.0"
 #ifndef PayloadDir
   #if FileExists(SourcePath + "ConnectXP.exe")
