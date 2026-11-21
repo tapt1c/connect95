@@ -1,5 +1,6 @@
 #include "language.h"
 #include "device_name.h"
+#include "settings.h"
 #include "../resources/resource.h"
 #include <wchar.h>
 
@@ -23,17 +24,9 @@ static BOOL valid_name(const WCHAR *name)
 
 void device_name_load(WCHAR name[DEVICE_NAME_MAX + 1])
 {
-    HKEY key;
-    WCHAR stored[DEVICE_NAME_MAX + 1];
-    DWORD type = 0, size = sizeof(stored);
-    LONG result;
+    WCHAR stored[DEVICE_NAME_MAX + 2];
     lstrcpyW(name, L"ConnectXP");
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return;
-    ZeroMemory(stored, sizeof(stored));
-    result = RegQueryValueExW(key, L"DeviceName", NULL, &type, (BYTE *)stored, &size);
-    RegCloseKey(key);
-    if (result == ERROR_SUCCESS && type == REG_SZ && size >= sizeof(WCHAR) &&
-        size <= sizeof(stored) && size % sizeof(WCHAR) == 0 && stored[size / sizeof(WCHAR) - 1] == 0 && valid_name(stored))
+    if (settings_get_string(L"DeviceName", stored, ARRAYSIZE(stored)) && valid_name(stored))
         lstrcpyW(name, stored);
 }
 
@@ -59,8 +52,6 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK) {
             WCHAR name[DEVICE_NAME_MAX + 1] = L"", previous[DEVICE_NAME_MAX + 1];
-            HKEY key;
-            LONG result;
             GetDlgItemTextW(dialog, IDC_DEVICE_NAME, name, ARRAYSIZE(name));
             if (!valid_name(name)) {
                 MessageBoxW(dialog, tr(L"Enter 1–32 characters without leading or trailing spaces.\nKDE Connect filters these characters: \" ' , ; : . ! ? ( ) [ ] < >"), L"ConnectXP", MB_OK | MB_ICONINFORMATION);
@@ -69,14 +60,7 @@ static INT_PTR CALLBACK name_dialog_proc(HWND dialog, UINT message, WPARAM wPara
             }
             device_name_load(previous);
             if (!wcscmp(name, previous)) { EndDialog(dialog, IDCANCEL); return TRUE; }
-            result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, NULL, 0,
-                                     KEY_SET_VALUE, NULL, &key, NULL);
-            if (result == ERROR_SUCCESS) {
-                result = RegSetValueExW(key, L"DeviceName", 0, REG_SZ, (const BYTE *)name,
-                                       (DWORD)(lstrlenW(name) + 1) * sizeof(WCHAR));
-                RegCloseKey(key);
-            }
-            if (result != ERROR_SUCCESS) {
+            if (!settings_set_string(L"DeviceName", name)) {
                 MessageBoxW(dialog, tr(L"Could not save the device name in your Windows profile."), L"ConnectXP", MB_OK | MB_ICONERROR);
                 return TRUE;
             }

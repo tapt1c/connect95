@@ -1,3 +1,3 @@
-# Keep the ANSI installer sources byte-for-byte, including Windows CRLF.
+# Keep the UTF-8 BOM installer sources byte-for-byte, including Windows CRLF.
 installer/*.iss -text whitespace=cr-at-eol
 installer/licenses/*.txt -text whitespace=cr-at-eol

@@ -41,8 +41,8 @@ static void set_text(HWND control, const WCHAR *text)
 
 static BOOL history_path(WCHAR path[MAX_PATH], BOOL temporary)
 {
-    if (SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, path) != S_OK || lstrlenW(path) > MAX_PATH - 40) return FALSE;
-    lstrcatW(path, temporary ? L"\\Connect95\\transfers.tmp" : L"\\Connect95\\transfers.json");
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path) != S_OK || lstrlenW(path) > MAX_PATH - 40) return FALSE;
+    lstrcatW(path, temporary ? L"\\ConnectXP\\transfers.tmp" : L"\\ConnectXP\\transfers.json");
     return TRUE;
 }
 

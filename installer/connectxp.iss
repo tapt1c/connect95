@@ -1,4 +1,7 @@
-; Encoding: Windows-1251, no BOM, CRLF. Inno Setup 5.6.1 ANSI.
+п»ї; Encoding: UTF-8 with BOM, CRLF. Inno Setup 5.6.1 Unicode.
+#ifndef UNICODE
+  #error Use Inno Setup 5.6.1 Unicode (u), not ANSI (a).
+#endif
 ; PayloadDir may be overridden with /DPayloadDir="C:\ConnectXP".
 #define ConnectXPMainScript
 #define AppVersion "1.0.0"
@@ -37,10 +40,13 @@ AppName=ConnectXP
 AppVersion={#AppVersion}
 AppPublisher=Daniel Myslivets
 AppPublisherURL=https://github.com/tapt1c/connect95
-DefaultDirName={localappdata}\Programs\ConnectXP
+DefaultDirName={win}\ConnectXP
+UsePreviousAppDir=no
+DisableDirPage=yes
+DisableReadyPage=yes
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 MinVersion=5.1sp3
 ArchitecturesAllowed=x86 x64
 AppMutex=Local\ConnectXP.Desktop
@@ -60,10 +66,6 @@ ShowLanguageDialog=auto
 Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
-[Tasks]
-Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
-Name: "autorun"; Description: "{cm:AutoRun}"; Flags: unchecked
-
 [Files]
 Source: "{#PayloadFile}"; DestDir: "{app}"; DestName: "ConnectXP.exe"; Flags: ignoreversion
 Source: "{#NoticesFile}"; DestDir: "{app}"; Flags: ignoreversion
@@ -73,44 +75,33 @@ Source: "licenses\license_ru.txt"; Flags: dontcopy
 Source: "licenses\license_en.txt"; Flags: dontcopy
 
 [Icons]
-Name: "{userprograms}\ConnectXP\ConnectXP"; Filename: "{app}\ConnectXP.exe"; WorkingDir: "{app}"
-Name: "{userprograms}\ConnectXP\{cm:UninstallShortcut}"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\ConnectXP"; Filename: "{app}\ConnectXP.exe"; WorkingDir: "{app}"; Tasks: desktopicon
-
-[Registry]
-; Keep an existing application's language preference on upgrade.
-Root: HKCU; Subkey: "Software\Connect95"; ValueType: dword; ValueName: "Language"; ValueData: "{code:AppLanguage}"; Flags: createvalueifdoesntexist
+Name: "{commonprograms}\ConnectXP\ConnectXP"; Filename: "{app}\ConnectXP.exe"; WorkingDir: "{app}"
+Name: "{commonprograms}\ConnectXP\{cm:UninstallShortcut}"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\ConnectXP"; Filename: "{app}\ConnectXP.exe"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{app}\ConnectXP.exe"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ConnectXP.exe"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [CustomMessages]
-en.DesktopIcon=Create a desktop shortcut
-ru.DesktopIcon=Создать ярлык на рабочем столе
-en.AutoRun=Start ConnectXP in the tray when I sign in to Windows
-ru.AutoRun=Запускать ConnectXP в трее при входе в Windows
 en.UninstallShortcut=Uninstall ConnectXP
-ru.UninstallShortcut=Удалить ConnectXP
+ru.UninstallShortcut=РЈРґР°Р»РёС‚СЊ ConnectXP
 en.LaunchApp=Launch ConnectXP
-ru.LaunchApp=Запустить ConnectXP
+ru.LaunchApp=Р—Р°РїСѓСЃС‚РёС‚СЊ ConnectXP
 en.LicenseReadError=Cannot read the terms of use. Setup cannot continue.
-ru.LicenseReadError=Не удалось прочитать условия использования. Продолжение установки невозможно.
+ru.LicenseReadError=РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ СѓСЃР»РѕРІРёСЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ. РџСЂРѕРґРѕР»Р¶РµРЅРёРµ СѓСЃС‚Р°РЅРѕРІРєРё РЅРµРІРѕР·РјРѕР¶РЅРѕ.
 en.LicenseEmpty=The terms of use are empty. Setup cannot continue.
-ru.LicenseEmpty=Текст условий использования пуст. Продолжение установки невозможно.
-en.AutorunError=Windows could not save the startup preference. You can change it in ConnectXP under Options.
-ru.AutorunError=Не удалось сохранить настройку автозапуска. Её можно изменить в меню «Параметры» ConnectXP.
+ru.LicenseEmpty=РўРµРєСЃС‚ СѓСЃР»РѕРІРёР№ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РїСѓСЃС‚. РџСЂРѕРґРѕР»Р¶РµРЅРёРµ СѓСЃС‚Р°РЅРѕРІРєРё РЅРµРІРѕР·РјРѕР¶РЅРѕ.
 
 [Messages]
-ru.WelcomeLabel1=Добро пожаловать в ConnectXP
-ru.WelcomeLabel2=Ваш телефон рядом — даже в Windows XP!%n%nПередавайте файлы, получайте уведомления и буфер обмена с телефона, находите его звуковым сигналом и управляйте музыкой на ПК.%n%nМастер установит ConnectXP 1.0 для вашей учётной записи. На телефоне понадобится KDE Connect; оба устройства должны быть доступны в одной локальной сети.%n%nНажмите «Далее», чтобы продолжить.
+ru.WelcomeLabel1=Р”РѕР±СЂРѕ РїРѕР¶Р°Р»РѕРІР°С‚СЊ РІ ConnectXP
+ru.WelcomeLabel2=Р’Р°С€ С‚РµР»РµС„РѕРЅ СЂСЏРґРѕРј вЂ” РґР°Р¶Рµ РІ Windows XP!%n%nРџРµСЂРµРґР°РІР°Р№С‚Рµ С„Р°Р№Р»С‹, РїРѕР»СѓС‡Р°Р№С‚Рµ СѓРІРµРґРѕРјР»РµРЅРёСЏ Рё Р±СѓС„РµСЂ РѕР±РјРµРЅР° СЃ С‚РµР»РµС„РѕРЅР°, РЅР°С…РѕРґРёС‚Рµ РµРіРѕ Р·РІСѓРєРѕРІС‹Рј СЃРёРіРЅР°Р»РѕРј Рё СѓРїСЂР°РІР»СЏР№С‚Рµ РјСѓР·С‹РєРѕР№ РЅР° РџРљ.%n%nРњР°СЃС‚РµСЂ СѓСЃС‚Р°РЅРѕРІРёС‚ ConnectXP 1.0 РІ РїР°РїРєСѓ Windows\ConnectXP Рё СЃРѕР·РґР°СЃС‚ СЏСЂР»С‹РєРё РІ РјРµРЅСЋ В«РџСѓСЃРєВ» Рё РЅР° СЂР°Р±РѕС‡РµРј СЃС‚РѕР»Рµ. РќР° С‚РµР»РµС„РѕРЅРµ РїРѕРЅР°РґРѕР±РёС‚СЃСЏ KDE Connect; РѕР±Р° СѓСЃС‚СЂРѕР№СЃС‚РІР° РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ РґРѕСЃС‚СѓРїРЅС‹ РІ РѕРґРЅРѕР№ Р»РѕРєР°Р»СЊРЅРѕР№ СЃРµС‚Рё.%n%nРќР°Р¶РјРёС‚Рµ В«Р”Р°Р»РµРµВ», С‡С‚РѕР±С‹ РїСЂРѕРґРѕР»Р¶РёС‚СЊ.
 en.WelcomeLabel1=Welcome to ConnectXP
-en.WelcomeLabel2=Keep your phone close — even on Windows XP!%n%nTransfer files, receive phone notifications and clipboard text, ring your phone to find it, and control music on your PC.%n%nSetup will install ConnectXP 1.0 for your user account. You will need KDE Connect on your phone and both devices reachable on the same local network.%n%nClick Next to continue.
-ru.FinishedLabel=ConnectXP установлен.%n%nОткройте KDE Connect на телефоне и обновите список устройств. Выберите телефон в ConnectXP, нажмите «Сопрячь / подключить» и сравните код на обоих устройствах.%n%nЕсли устройства не находят друг друга, проверьте подключение к локальной сети и разрешения брандмауэра.
+en.WelcomeLabel2=Keep your phone close вЂ” even on Windows XP!%n%nTransfer files, receive phone notifications and clipboard text, ring your phone to find it, and control music on your PC.%n%nSetup will install ConnectXP 1.0 in Windows\ConnectXP and create Start menu and desktop shortcuts. You will need KDE Connect on your phone and both devices reachable on the same local network.%n%nClick Next to continue.
+ru.FinishedLabel=ConnectXP СѓСЃС‚Р°РЅРѕРІР»РµРЅ.%n%nРћС‚РєСЂРѕР№С‚Рµ KDE Connect РЅР° С‚РµР»РµС„РѕРЅРµ Рё РѕР±РЅРѕРІРёС‚Рµ СЃРїРёСЃРѕРє СѓСЃС‚СЂРѕР№СЃС‚РІ. Р’С‹Р±РµСЂРёС‚Рµ С‚РµР»РµС„РѕРЅ РІ ConnectXP, РЅР°Р¶РјРёС‚Рµ В«РЎРѕРїСЂСЏС‡СЊ / РїРѕРґРєР»СЋС‡РёС‚СЊВ» Рё СЃСЂР°РІРЅРёС‚Рµ РєРѕРґ РЅР° РѕР±РѕРёС… СѓСЃС‚СЂРѕР№СЃС‚РІР°С….%n%nР•СЃР»Рё СѓСЃС‚СЂРѕР№СЃС‚РІР° РЅРµ РЅР°С…РѕРґСЏС‚ РґСЂСѓРі РґСЂСѓРіР°, РїСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ Рє Р»РѕРєР°Р»СЊРЅРѕР№ СЃРµС‚Рё Рё СЂР°Р·СЂРµС€РµРЅРёСЏ Р±СЂР°РЅРґРјР°СѓСЌСЂР°.
 en.FinishedLabel=ConnectXP is installed.%n%nOpen KDE Connect on your phone and refresh the device list. Select your phone in ConnectXP, click Pair / connect and compare the code on both devices.%n%nIf the devices cannot find each other, check the local network connection and firewall permissions.
 
 [Code]
 var
-  StartupTaskInitialized: Boolean;
   CustomLicensePage: TWizardPage;
   LicensePanel: TPanel;
   LicenseLogo: TBitmapImage;
@@ -122,11 +113,6 @@ var
 
 const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
-
-function AppLanguage(Param: String): String;
-begin
-  if ActiveLanguage() = 'ru' then Result := '1' else Result := '0';
-end;
 
 function OwnAutorun(): Boolean;
 var
@@ -148,37 +134,6 @@ begin
   Result := CompareText(ExePath, ExpandConstant('{app}\ConnectXP.exe')) = 0;
 end;
 
-function ExplicitTasks(): Boolean;
-var
-  I: Integer;
-  Arg: String;
-begin
-  Result := False;
-  for I := 1 to ParamCount() do begin
-    Arg := Uppercase(ParamStr(I));
-    if (Pos('/TASKS=', Arg) = 1) or (Pos('/MERGETASKS=', Arg) = 1) then begin
-      Result := True;
-      Exit;
-    end;
-  end;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  Saved: Boolean;
-begin
-  if CurStep = ssPostInstall then begin
-    Saved := True;
-    if IsTaskSelected('autorun') then
-      Saved := RegWriteStringValue(HKCU, RunKey, 'ConnectXP',
-        '"' + ExpandConstant('{app}\ConnectXP.exe') + '" --tray')
-    else if OwnAutorun() then
-      Saved := RegDeleteValue(HKCU, RunKey, 'ConnectXP');
-    if not Saved then
-      SuppressibleMsgBox(CustomMessage('AutorunError'), mbInformation, MB_OK, IDOK);
-  end;
-end;
-
 procedure LicenseChoiceChanged(Sender: TObject);
 begin
   if WizardForm.CurPageID = CustomLicensePage.ID then
@@ -194,8 +149,8 @@ begin
   IsRussian := ActiveLanguage() = 'ru';
   CustomLicensePage := CreateCustomPage(wpWelcome, '', '');
 
-  { Белая область на всю высоту заголовка и содержимого страницы. }
-  { Кнопки навигации мастера остаются за пределами этой области. }
+  { Р‘РµР»Р°СЏ РѕР±Р»Р°СЃС‚СЊ РЅР° РІСЃСЋ РІС‹СЃРѕС‚Сѓ Р·Р°РіРѕР»РѕРІРєР° Рё СЃРѕРґРµСЂР¶РёРјРѕРіРѕ СЃС‚СЂР°РЅРёС†С‹. }
+  { РљРЅРѕРїРєРё РЅР°РІРёРіР°С†РёРё РјР°СЃС‚РµСЂР° РѕСЃС‚Р°СЋС‚СЃСЏ Р·Р° РїСЂРµРґРµР»Р°РјРё СЌС‚РѕР№ РѕР±Р»Р°СЃС‚Рё. }
   LicensePanel := TPanel.Create(WizardForm);
   LicensePanel.Parent := WizardForm;
   LicensePanel.BevelOuter := bvNone;
@@ -206,7 +161,7 @@ begin
     WizardForm.ClientWidth, PanelHeight);
   LicensePanel.Visible := False;
 
-  { Используем вашу большую картинку с исходной страницы приветствия. }
+  { РСЃРїРѕР»СЊР·СѓРµРј РІР°С€Сѓ Р±РѕР»СЊС€СѓСЋ РєР°СЂС‚РёРЅРєСѓ СЃ РёСЃС…РѕРґРЅРѕР№ СЃС‚СЂР°РЅРёС†С‹ РїСЂРёРІРµС‚СЃС‚РІРёСЏ. }
   LicenseLogo := TBitmapImage.Create(WizardForm);
   LicenseLogo.Parent := LicensePanel;
   LicenseLogo.SetBounds(0, 0,
@@ -251,11 +206,11 @@ begin
 
   if IsRussian then
   begin
-    LicenseTitle.Caption := 'Условия использования';
+    LicenseTitle.Caption := 'РЈСЃР»РѕРІРёСЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ';
     LicenseDescription.Caption :=
-      'Ознакомьтесь с условиями перед продолжением установки.';
-    AcceptRadio.Caption := 'Я принимаю условия';
-    DeclineRadio.Caption := 'Я не принимаю условия';
+      'РћР·РЅР°РєРѕРјСЊС‚РµСЃСЊ СЃ СѓСЃР»РѕРІРёСЏРјРё РїРµСЂРµРґ РїСЂРѕРґРѕР»Р¶РµРЅРёРµРј СѓСЃС‚Р°РЅРѕРІРєРё.';
+    AcceptRadio.Caption := 'РЇ РїСЂРёРЅРёРјР°СЋ СѓСЃР»РѕРІРёСЏ';
+    DeclineRadio.Caption := 'РЇ РЅРµ РїСЂРёРЅРёРјР°СЋ СѓСЃР»РѕРІРёСЏ';
     LicenseFileName := 'license_ru.txt';
   end
   else
@@ -283,12 +238,6 @@ procedure CurPageChanged(CurPageID: Integer);
 var
   ShowLicense: Boolean;
 begin
-  if (CurPageID = wpSelectTasks) and not StartupTaskInitialized then begin
-    { Inno Setup 5.6.1 has no WizardSelectTasks API. These are the two tasks above. }
-    if not ExplicitTasks() then
-      WizardForm.TasksList.Checked[1] := RegValueExists(HKCU, RunKey, 'ConnectXP');
-    StartupTaskInitialized := True;
-  end;
   ShowLicense := CurPageID = CustomLicensePage.ID;
   LicensePanel.Visible := ShowLicense;
   if ShowLicense then

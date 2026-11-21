@@ -1,4 +1,5 @@
 #include "language.h"
+#include "settings.h"
 #include <shellapi.h>
 #include <string.h>
 #include <wchar.h>
@@ -177,29 +178,16 @@ static const struct { const WCHAR *english, *russian; } translations[] = {
 
 void language_load(void)
 {
-    HKEY key;
-    DWORD value, type, size = sizeof(value);
-    selectedLanguage = LANGUAGE_ENGLISH;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return;
-    if (RegQueryValueExW(key, L"Language", NULL, &type, (BYTE *)&value, &size) == ERROR_SUCCESS &&
-        type == REG_DWORD && size == sizeof(value) && value <= LANGUAGE_RUSSIAN) selectedLanguage = (int)value;
-    RegCloseKey(key);
+    BOOL russian = (GetUserDefaultUILanguage() & 0x03ff) == LANG_RUSSIAN;
+    selectedLanguage = settings_get(L"Language", russian) ? LANGUAGE_RUSSIAN : LANGUAGE_ENGLISH;
 }
 
 int language_current(void) { return selectedLanguage; }
 
 BOOL language_select(int language)
 {
-    HKEY key;
-    DWORD value = (DWORD)language;
-    LONG result;
     if (language != LANGUAGE_ENGLISH && language != LANGUAGE_RUSSIAN) return FALSE;
-    result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (result == ERROR_SUCCESS) {
-        result = RegSetValueExW(key, L"Language", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
-        RegCloseKey(key);
-    }
-    if (result != ERROR_SUCCESS) return FALSE;
+    if (!settings_set(L"Language", language == LANGUAGE_RUSSIAN)) return FALSE;
     selectedLanguage = language;
     return TRUE;
 }

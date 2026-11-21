@@ -23,7 +23,7 @@ Native C / Win32 KDE Connect client for Windows XP SP3 x86.
 - Мультимедийный пульт через стандартные медиаклавиши Windows.
 - Автозапуск, запуск в трее и изменение имени ПК для KDE Connect.
 
-Полученные файлы сохраняются в «Мои документы\ConnectXP». Профиль, сертификаты и история используют существующую папку `%APPDATA%\Connect95` и настройки `HKCU\Software\Connect95` для совместимости с предыдущими версиями.
+Полученные файлы сохраняются в «Мои документы\ConnectXP». Профиль, сертификаты и история сохраняются в `%LOCALAPPDATA%\ConnectXP`, настройки — в файле `settings.ini` в той же папке. Старый профиль не импортируется; после обновления потребуется повторное сопряжение.
 
 ## Практические ограничения
 
@@ -43,7 +43,7 @@ Use the same LAN as your phone, refresh devices in Android KDE Connect, then sel
 
 Received files go to **My Documents\ConnectXP**. Choose **View → Language** for English or Russian. Startup preferences are under **Options**. Use Ctrl/Shift in **Transfer history**, then **Remove selected** or Delete to remove history entries.
 
-Protocol 7 pairing, one active phone and sequential file transfers are supported. Media remote uses generic Windows media keys. Android may require explicit clipboard sending. Existing profiles remain under `%APPDATA%\Connect95`.
+Protocol 7 pairing, one active phone and sequential file transfers are supported. Media remote uses generic Windows media keys. Android may require explicit clipboard sending. Profiles are stored in `%LOCALAPPDATA%\ConnectXP`, with settings in `settings.ini`. Old profiles are not imported; pair your phone again after updating.
 
 ## Verification
 

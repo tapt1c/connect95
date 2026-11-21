@@ -23,6 +23,9 @@ clean:
 
 .PHONY: all clean
 
+build/settings-test.exe: tests/settings_test.c src/settings.c src/settings.h | build
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/settings_test.c src/settings.c -lshell32 -ladvapi32
+
 HOST_CC ?= cc
 test: | build
 	python3 tests/check_ui_layout.py

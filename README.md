@@ -7,9 +7,9 @@ A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 · [release notes](releases/ConnectXP-1.0.0-NOTES.md)
 · [SHA-256](releases/ConnectXP-1.0.0-SHA256SUMS.txt)
 
-An [Inno Setup 5.6.1 ANSI installer script](installer/README.md) is available
+An [Inno Setup 5.6.1 Unicode installer script](installer/README.md) is available
 with Russian/English welcome text and terms, supplied wizard artwork and
-per-user installation. The [self-contained source kit](https://github.com/tapt1c/connect95/raw/refs/heads/main/releases/ConnectXP-1.0.0-Inno-Sources.zip)
+installation in the Windows directory. The [self-contained source kit](https://github.com/tapt1c/connect95/raw/refs/heads/main/releases/ConnectXP-1.0.0-Inno-Sources.zip)
 includes the portable EXE and all installer assets; a compiled setup has not yet
 been validated.
 
@@ -89,8 +89,10 @@ unsupported. Broadcast announcements use the system's default IPv4 route.
 Disabling it removes that value. **Options → Start in tray** controls ordinary
 launches. `--tray` always requests a hidden launch; if the tray icon cannot be
 created, the main window opens. Double-click the tray icon to restore the window.
-Startup and reconnect preferences are per user under `HKCU\Software\Connect95`.
+Startup and reconnect preferences are per user in `%LOCALAPPDATA%\ConnectXP\settings.ini`.
 A session-local mutex prevents a second instance from using the same profile.
+Profiles from earlier storage locations are not imported. Pair the phone again
+after updating to this layout; existing files in older folders are left intact.
 
 ## Battery tray and multimedia remote
 
@@ -117,8 +119,8 @@ seek, control per-player volume, or report actual playback state.
 
 Choose **View → Language → English / Русский** to switch immediately, including
 the About text and notifications window. The choice is saved per Windows user
-as a `Language` DWORD under `HKEY_CURRENT_USER\Software\Connect95`.
-English is the default. Unicode shell dialogs display Russian on English Windows XP too.
+as `Language=0` (English) or `Language=1` (Russian) in `%LOCALAPPDATA%\ConnectXP\settings.ini`.
+The Windows UI language supplies the initial default. Unicode shell dialogs display Russian on English Windows XP too.
 Phone notification content is displayed as received.
 
 ## Pairing
@@ -143,7 +145,7 @@ Choose **Edit → PC device name…** to set the name shown for this PC in KDE C
 on the phone. Names support Unicode and up to 32 UTF-16 code units. The dialog
 checks characters filtered by KDE Connect and reports invalid input.
 
-The preference is stored as `DeviceName` under `HKEY_CURRENT_USER\Software\Connect95`.
+The preference is stored as `DeviceName` in `%LOCALAPPDATA%\ConnectXP\settings.ini`.
 An unset preference uses **ConnectXP**. An idle paired connection reconnects after
 saving a changed name. During a file transfer, reconnect waits until completion.
 When disconnected, the configured name is used on the next connection.
@@ -188,7 +190,7 @@ On systems providing the shell AVI copy resource, the window plays that system
 animation during transfer. No animation asset is distributed.
 **File → Transfer history** opens the separate history window. The newest 64 results (received
 and sent, timestamp, filename and outcome) are saved in
-`%APPDATA%\Connect95\transfers.json` and restored at startup. **Open folder**
+`%LOCALAPPDATA%\ConnectXP\transfers.json` and restored at startup. **Open folder**
 opens the received-files directory without opening a received file.
 
 The transfer popup contains only the current file, status, progress and actions.
@@ -210,8 +212,7 @@ arrive or the interface language changes. After deletion, selection is cleared.
 The phone's KDE Connect plugins must be enabled for these features.
 
 To receive a file, share it from Android using KDE Connect and choose ConnectXP.
-Files are saved under **My Documents\ConnectXP**. Earlier downloads are available
-in **My Documents\Connect95**. Existing files are preserved,
+Files are saved under **My Documents\ConnectXP**. Existing files are preserved,
 with numbered names used for collisions. Files are received into temporary
 `.part` files, checked for completeness, and renamed after saving. Failed or
 cancelled transfers remove their temporary file. Files are never opened automatically.
@@ -312,9 +313,9 @@ user-scoped DPAPI (`CryptProtectData`). System TLS updates are unnecessary for
 this application. The system date must be correct for certificate validation.
 
 The identity is generated at startup and stored in
-`%APPDATA%\Connect95\identity.dat`. Phone certificates use `peer-<deviceId>.der`
-in the same directory. The established Connect95 profile and registry namespace
-provide upgrade compatibility for ConnectXP. DPAPI binds the identity to its Windows user profile.
+`%LOCALAPPDATA%\ConnectXP\identity.dat`. Phone certificates use `peer-<deviceId>.der`
+in the same directory. Settings use a UTF-16 `settings.ini` there; no application
+settings are stored in the registry. DPAPI binds the identity to its Windows user profile.
 Unreadable identities are preserved for recovery. Profile access is locked against
 concurrent clients, and identity and pin writes use atomic replacement.
 
@@ -349,6 +350,14 @@ The toolchain must target MSVCRT. The Makefile selects Win32 API and PE subsyste
 version 5.1. Runtime compatibility requires testing on XP SP3.
 
 ## Validation
+
+`make build/settings-test.exe` builds the Win32 settings integration test.
+Run `settings-test.exe`, then `settings-test.exe --verify` in a clean Windows
+user profile (or isolated Wine prefix). It checks local AppData storage, UTF-16
+and Cyrillic persistence across processes, invalid values and save failures.
+It refuses to run if an existing ConnectXP profile is present. The same source
+also passes through 64-bit Winelib in the cloud environment; this does not
+replace testing the x86 application on Windows XP.
 
 ```sh
 make test

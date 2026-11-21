@@ -1,25 +1,58 @@
 #include "settings.h"
+#include <shlobj.h>
+
+static BOOL settings_path(WCHAR path[MAX_PATH], BOOL create)
+{
+    WCHAR directory[MAX_PATH];
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | (create ? CSIDL_FLAG_CREATE : 0),
+                         NULL, 0, directory) != S_OK || lstrlenW(directory) > MAX_PATH - 40) return FALSE;
+    lstrcatW(directory, L"\\ConnectXP");
+    if (create && !CreateDirectoryW(directory, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) return FALSE;
+    lstrcpyW(path, directory);
+    lstrcatW(path, L"\\settings.ini");
+    return TRUE;
+}
+
+BOOL settings_get_string(const WCHAR *name, WCHAR *value, DWORD capacity)
+{
+    WCHAR path[MAX_PATH];
+    DWORD length;
+    if (!value || capacity < 2) return FALSE;
+    value[0] = 0;
+    if (!settings_path(path, FALSE)) return FALSE;
+    length = GetPrivateProfileStringW(L"Settings", name, L"", value, capacity, path);
+    return length != 0 && length < capacity - 1;
+}
+
+BOOL settings_set_string(const WCHAR *name, const WCHAR *value)
+{
+    WCHAR path[MAX_PATH];
+    HANDLE file;
+    DWORD written;
+    const BYTE bom[] = {0xff, 0xfe};
+    if (!settings_path(path, TRUE)) return FALSE;
+    /* XP's profile API preserves Unicode only when an existing file has a BOM. */
+    file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE) {
+        BOOL success = WriteFile(file, bom, sizeof(bom), &written, NULL) && written == sizeof(bom);
+        CloseHandle(file);
+        if (!success) { DeleteFileW(path); return FALSE; }
+    } else if (GetLastError() != ERROR_FILE_EXISTS) return FALSE;
+    return WritePrivateProfileStringW(L"Settings", name, value, path);
+}
 
 BOOL settings_get(const WCHAR *name, BOOL fallback)
 {
-    HKEY key;
-    DWORD value = 0, type = 0, bytes = sizeof(value);
-    LONG result;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, KEY_QUERY_VALUE, &key)) return fallback;
-    result = RegQueryValueExW(key, name, NULL, &type, (BYTE *)&value, &bytes);
-    RegCloseKey(key);
-    return !result && type == REG_DWORD && bytes == sizeof(value) && value <= 1 ? value != 0 : fallback;
+    WCHAR value[4];
+    if (!settings_get_string(name, value, ARRAYSIZE(value))) return fallback;
+    if (value[0] == L'0' && value[1] == 0) return FALSE;
+    if (value[0] == L'1' && value[1] == 0) return TRUE;
+    return fallback;
 }
 
 BOOL settings_set(const WCHAR *name, BOOL enabled)
 {
-    HKEY key;
-    DWORD value = enabled != FALSE;
-    LONG result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Connect95", 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (result) return FALSE;
-    result = RegSetValueExW(key, name, 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
-    RegCloseKey(key);
-    return result == ERROR_SUCCESS;
+    return settings_set_string(name, enabled ? L"1" : L"0");
 }
 
 BOOL settings_autostart(void)

@@ -18,9 +18,9 @@ static int valid_id(const char *id)
 
 static int directory_path(WCHAR *directory)
 {
-    if (SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, directory) != S_OK ||
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, directory) != S_OK ||
         lstrlenW(directory) > MAX_PATH - 80) return 0;
-    lstrcatW(directory, L"\\Connect95");
+    lstrcatW(directory, L"\\ConnectXP");
     return 1;
 }
 

@@ -1,4 +1,4 @@
-ConnectXP 1.0 � terms of use
+﻿ConnectXP 1.0 — terms of use
 
 Author: Daniel Myslivets.
 ConnectXP is an implementation of the KDE Connect protocol for Windows XP SP3 (32-bit).
@@ -10,11 +10,11 @@ ConnectXP links a computer and a phone over a local network: it transfers files,
 Connect only devices you own or trust. When pairing for the first time, compare the code on the computer and phone. Clipboard text and notifications may contain personal information. You can disable the corresponding features in KDE Connect on the phone.
 
 3. Storage and removal
-The computer identity, pairing keys, device details and transfer history are stored in %APPDATA%\Connect95. This folder name is retained for compatibility with earlier versions. Settings are stored under HKEY_CURRENT_USER\Software\Connect95.
+The computer identity, pairing keys, device details and transfer history are stored in %LOCALAPPDATA%\ConnectXP. Settings are stored in settings.ini in the same folder.
 Received files are saved to My Documents\ConnectXP. Removing the program normally keeps settings and pairings. You can choose to clear them separately; received files are always kept. After clearing pairing data, you will need to pair your devices again.
 
 4. Installation and network access
-The program is installed for the current Windows user. You can choose a desktop shortcut and startup with Windows during installation; startup can also be changed in the program. Connecting requires KDE Connect on the phone and access to a local network. Your firewall may ask you to allow network access.
+The program is installed in Windows\ConnectXP with administrator privileges. Start menu and desktop shortcuts are created automatically. Each user has separate settings in local AppData. Startup with Windows can be enabled in the program. Connecting requires KDE Connect on the phone and access to a local network. Your firewall may ask you to allow network access.
 
 5. Limitations and responsibility
 The program is provided in its current state, without a guarantee of uninterrupted operation or compatibility with every device. Keep backups of important files and check transfer results. These terms do not limit user rights provided by applicable law.

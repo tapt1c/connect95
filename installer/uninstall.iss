@@ -1,26 +1,26 @@
-#ifndef ConnectXPMainScript
-  #error Compile connectxp_cp1251.iss, not uninstall.iss.
+п»ї#ifndef ConnectXPMainScript
+  #error Compile connectxp.iss, not uninstall.iss.
 #endif
 [CustomMessages]
-; Encoding: Windows-1251, no BOM, CRLF. Included by connectxp_cp1251.iss.
+; Encoding: UTF-8 with BOM, CRLF. Included by connectxp.iss.
 en.RemoveTitle=Remove ConnectXP
-ru.RemoveTitle=Удаление ConnectXP
-en.RemoveDescription=ConnectXP and its shortcuts will be removed for this Windows user. Settings and pairings are kept unless you select the option below.
-ru.RemoveDescription=ConnectXP и его ярлыки будут удалены для текущего пользователя Windows. Настройки и сопряжения сохранятся, если не выбрать очистку ниже.
+ru.RemoveTitle=РЈРґР°Р»РµРЅРёРµ ConnectXP
+en.RemoveDescription=ConnectXP and its shortcuts will be removed from this computer. Only the account shown below can have its settings and pairings cleared with this option.
+ru.RemoveDescription=ConnectXP Рё РµРіРѕ СЏСЂР»С‹РєРё Р±СѓРґСѓС‚ СѓРґР°Р»РµРЅС‹ СЃ СЌС‚РѕРіРѕ РєРѕРјРїСЊСЋС‚РµСЂР°. РћС‚РјРµС‚РєР° РЅРёР¶Рµ РѕС‡РёС‰Р°РµС‚ РЅР°СЃС‚СЂРѕР№РєРё Рё СЃРѕРїСЂСЏР¶РµРЅРёСЏ С‚РѕР»СЊРєРѕ СѓРєР°Р·Р°РЅРЅРѕР№ СѓС‡С‘С‚РЅРѕР№ Р·Р°РїРёСЃРё.
 en.RemoveAccount=Account: %1
-ru.RemoveAccount=Учётная запись: %1
+ru.RemoveAccount=РЈС‡С‘С‚РЅР°СЏ Р·Р°РїРёСЃСЊ: %1
 en.RemoveData=Delete my pairings, transfer history and settings
-ru.RemoveData=Удалить мои сопряжения, историю передач и настройки
+ru.RemoveData=РЈРґР°Р»РёС‚СЊ РјРѕРё СЃРѕРїСЂСЏР¶РµРЅРёСЏ, РёСЃС‚РѕСЂРёСЋ РїРµСЂРµРґР°С‡ Рё РЅР°СЃС‚СЂРѕР№РєРё
 en.RemoveDataNote=Received files in My Documents are always kept. Other Windows users' settings are not changed. Silent removal keeps personal data.
-ru.RemoveDataNote=Полученные файлы в «Моих документах» сохранятся. Настройки других пользователей не изменяются. Тихое удаление сохраняет личные данные.
+ru.RemoveDataNote=РџРѕР»СѓС‡РµРЅРЅС‹Рµ С„Р°Р№Р»С‹ РІ В«РњРѕРёС… РґРѕРєСѓРјРµРЅС‚Р°С…В» СЃРѕС…СЂР°РЅСЏС‚СЃСЏ. РќР°СЃС‚СЂРѕР№РєРё РґСЂСѓРіРёС… РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РЅРµ РёР·РјРµРЅСЏСЋС‚СЃСЏ. РўРёС…РѕРµ СѓРґР°Р»РµРЅРёРµ СЃРѕС…СЂР°РЅСЏРµС‚ Р»РёС‡РЅС‹Рµ РґР°РЅРЅС‹Рµ.
 en.RemoveContinue=Continue
-ru.RemoveContinue=Продолжить
+ru.RemoveContinue=РџСЂРѕРґРѕР»Р¶РёС‚СЊ
 en.RemoveCancel=Cancel
-ru.RemoveCancel=Отмена
+ru.RemoveCancel=РћС‚РјРµРЅР°
 en.CloseApp=Please exit ConnectXP using its tray menu, then run removal again.
-ru.CloseApp=Завершите работу ConnectXP через меню значка в трее, затем повторите удаление.
-en.CleanupIncomplete=Some ConnectXP settings or profile files could not be removed. Received files have been kept. Check %APPDATA%\Connect95 and HKCU\Software\Connect95 if you still want to clear personal data.
-ru.CleanupIncomplete=Часть настроек или файлов профиля ConnectXP удалить не удалось. Полученные файлы сохранены. Если очистка ещё нужна, проверьте %APPDATA%\Connect95 и HKCU\Software\Connect95.
+ru.CloseApp=Р—Р°РІРµСЂС€РёС‚Рµ СЂР°Р±РѕС‚Сѓ ConnectXP С‡РµСЂРµР· РјРµРЅСЋ Р·РЅР°С‡РєР° РІ С‚СЂРµРµ, Р·Р°С‚РµРј РїРѕРІС‚РѕСЂРёС‚Рµ СѓРґР°Р»РµРЅРёРµ.
+en.CleanupIncomplete=Some ConnectXP settings or profile files could not be removed. Received files have been kept. Check %LOCALAPPDATA%\ConnectXP if you still want to clear personal data.
+ru.CleanupIncomplete=Р§Р°СЃС‚СЊ РЅР°СЃС‚СЂРѕРµРє РёР»Рё С„Р°Р№Р»РѕРІ РїСЂРѕС„РёР»СЏ ConnectXP СѓРґР°Р»РёС‚СЊ РЅРµ СѓРґР°Р»РѕСЃСЊ. РџРѕР»СѓС‡РµРЅРЅС‹Рµ С„Р°Р№Р»С‹ СЃРѕС…СЂР°РЅРµРЅС‹. Р•СЃР»Рё РѕС‡РёСЃС‚РєР° РµС‰С‘ РЅСѓР¶РЅР°, РїСЂРѕРІРµСЂСЊС‚Рµ %LOCALAPPDATA%\ConnectXP.
 
 [Code]
 var
@@ -40,7 +40,8 @@ var
 begin
   Name := Lowercase(Name);
   Result := (Name = 'identity.dat') or (Name = 'identity.dat.tmp') or
-    (Name = 'identity.lock') or (Name = 'transfers.json') or (Name = 'transfers.tmp');
+    (Name = 'identity.lock') or (Name = 'transfers.json') or (Name = 'transfers.tmp') or
+    (Name = 'settings.ini');
   if Result or (Copy(Name, 1, 5) <> 'peer-') then Exit;
   Delete(Name, 1, 5);
   P := Pos('.', Name);
@@ -62,7 +63,7 @@ var
   Attributes: LongWord;
 begin
   Result := True;
-  Root := ExpandConstant('{userappdata}\Connect95');
+  Root := ExpandConstant('{localappdata}\ConnectXP');
   if DirExists(Root) then begin
     Attributes := ProfileAttributes(Root);
     { Never recurse through a redirected/reparse-point profile directory. }
@@ -85,8 +86,7 @@ begin
     { Unknown files and subdirectories are kept; remove the directory only if empty. }
     RemoveDir(Root);
   end;
-  if RegKeyExists(HKCU, 'Software\Connect95') then
-    if not RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Connect95') then Result := False;
+
 end;
 
 function ChooseUninstallData(): Boolean;

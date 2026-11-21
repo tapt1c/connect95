@@ -91,9 +91,9 @@ int credentials_load(Credentials *c)
     char subject[80], expiry[16];
     SYSTEMTIME now;
     mbedtls_x509write_cert writer;
-    if (SHGetFolderPathW(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, 0, c->directory) != S_OK ||
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE, NULL, 0, c->directory) != S_OK ||
         lstrlenW(c->directory) > MAX_PATH - 80) return 0;
-    lstrcatW(c->directory, L"\\Connect95");
+    lstrcatW(c->directory, L"\\ConnectXP");
     if (!CreateDirectoryW(c->directory, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) return 0;
     wsprintfW(path, L"%s\\identity.lock", c->directory);
     c->lock = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
