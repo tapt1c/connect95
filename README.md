@@ -2,7 +2,7 @@
 
 A KDE Connect client written in C and Win32, targeting Windows XP SP3 x86.
 
-Version 0.11.5 introduces an Explorer-style task pane, compact themed action buttons,
+Version 0.11.6 introduces an Explorer-style task pane, compact themed action buttons,
 a resizable and maximizable main window (up to 880×560 initially, minimum 640×480),
 and a separate IE6-inspired file transfer window. The white work area and
 collapsible task groups follow the Explorer reference. Sidebar tasks are borderless
@@ -36,6 +36,8 @@ and recognizes common `sectionss`, `sectiontaskss` and `taskpane` RGB/bitmap
 settings, including background, header and arrow bitmaps. This handles the
 supplied Luna Element style's teal background, light headers and black links.
 Unsupported shell-style declarations fall back to UxTheme/system colors.
+Header chevrons use their intrinsic shell bitmap size or the active theme's
+`GetThemePartSize` result, centered vertically with preserved proportions.
 Themes are reloaded on theme/color changes. No uploaded theme files or artwork
 are bundled or installed by ConnectXP. The Luna Element archive was inspected
 as resource data; its theme was not installed or executed in this environment. English and Russian interfaces
@@ -302,7 +304,7 @@ Unreadable identities are preserved for recovery. Profile access is locked again
 concurrent clients, and identity and pin writes use atomic replacement.
 
 Discovery and protocol 7 pairing have been reported working by the user.
-Version 0.11.5 incoming/reconnect behavior, startup, themes, maximized layout,
+Version 0.11.6 incoming/reconnect behavior, startup, themes, maximized layout,
 transfer queue/history, battery tray and multimedia keys still need validation
 with a real Windows XP/Android pair. Previous file transfer and pairing were
 reported working by the user. Automated TLS tests use an in-memory
@@ -365,7 +367,7 @@ The protocol was checked against KDE Connect sources at commit
 Mbed TLS is used under Apache-2.0 and cJSON 1.7.19 under MIT.
 License texts are included in `releases/THIRD-PARTY-NOTICES.txt`.
 
-The 0.11.5 manual pass should also cover phone-initiated TLS reconnect with the
+The 0.11.6 manual pass should also cover phone-initiated TLS reconnect with the
 original and a changed certificate, Wi-Fi loss/recovery, explicit disconnect,
 quoted startup paths containing spaces, Explorer restarts with both tray icons,
 multiple-selection and dropped-file batches, cancelling with queued files,

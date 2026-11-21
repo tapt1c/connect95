@@ -10,6 +10,7 @@ typedef HRESULT (WINAPI *CloseTheme)(HTHEME);
 typedef HRESULT (WINAPI *DrawTheme)(HTHEME, HDC, int, int, const RECT *, const RECT *);
 typedef HRESULT (WINAPI *ThemeColor)(HTHEME, int, int, int, COLORREF *);
 typedef HRESULT (WINAPI *CurrentTheme)(LPWSTR, int, LPWSTR, int, LPWSTR, int);
+typedef HRESULT (WINAPI *ThemePartSize)(HTHEME, HDC, int, int, RECT *, THEMESIZE, SIZE *);
 static HMODULE library;
 static HTHEME explorer, button;
 static OpenTheme openTheme;
@@ -17,13 +18,15 @@ static CloseTheme closeTheme;
 static DrawTheme drawTheme;
 static ThemeColor themeColor;
 static CurrentTheme currentTheme;
+static ThemePartSize themePartSize;
 static COLORREF bodyColor, linkColor;
 static COLORREF headerColor;
 static HBITMAP shellBackground, shellHeader;
 static HICON shellCollapse, shellExpand;
+static SIZE shellCollapseSize, shellExpandSize;
 static BOOL shellStyle;
 
-static HICON bitmap_icon(HMODULE module, int id)
+static HICON bitmap_icon(HMODULE module, int id, SIZE *size)
 {
     HBITMAP bitmap, mask;
     DIBSECTION dib;
@@ -51,6 +54,7 @@ static HICON bitmap_icon(HMODULE module, int id)
     SelectObject(dc, previous); DeleteDC(dc);
     ZeroMemory(&info, sizeof(info)); info.fIcon = TRUE; info.hbmColor = bitmap; info.hbmMask = mask;
     icon = CreateIconIndirect(&info);
+    if (icon) { size->cx = dib.dsBm.bmWidth; size->cy = dib.dsBm.bmHeight; }
     DeleteObject(bitmap); DeleteObject(mask);
     return icon;
 }
@@ -91,8 +95,8 @@ static void load_shell_style(void)
             headerColor = style.colors & SHELL_HEADER_COLOR ? style.headerColor : linkColor;
             if (style.backgroundBitmap) shellBackground = LoadImageW(module, MAKEINTRESOURCEW(style.backgroundBitmap), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
             if (style.headerBitmap) shellHeader = LoadImageW(module, MAKEINTRESOURCEW(style.headerBitmap), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
-            shellCollapse = bitmap_icon(module, style.expandedBitmap);
-            shellExpand = bitmap_icon(module, style.collapsedBitmap);
+            shellCollapse = bitmap_icon(module, style.expandedBitmap, &shellCollapseSize);
+            shellExpand = bitmap_icon(module, style.collapsedBitmap, &shellExpandSize);
         }
         HeapFree(GetProcessHeap(), 0, text);
     }
@@ -148,6 +152,7 @@ void theme_refresh(HWND window)
         drawTheme = (DrawTheme)(void *)GetProcAddress(library, "DrawThemeBackground");
         themeColor = (ThemeColor)(void *)GetProcAddress(library, "GetThemeColor");
         currentTheme = (CurrentTheme)(void *)GetProcAddress(library, "GetCurrentThemeName");
+        themePartSize = (ThemePartSize)(void *)GetProcAddress(library, "GetThemePartSize");
     }
     if (openTheme && closeTheme && drawTheme) {
         explorer = openTheme(window, L"ExplorerBar");
@@ -222,19 +227,36 @@ void theme_link_background(HDC dc, const RECT *rect)
 void theme_group_header(HDC dc, const RECT *rect, const WCHAR *text, HFONT font, BOOL collapsed, BOOL focused)
 {
     RECT label = *rect, arrow = *rect;
+    HICON glyph = collapsed ? shellExpand : shellCollapse;
+    int part = collapsed ? EBP_NORMALGROUPEXPAND : EBP_NORMALGROUPCOLLAPSE;
+    SIZE natural = {21, 21};
+    int width, height, availableHeight = rect->bottom - rect->top, availableWidth = rect->right - rect->left - 8;
     HGDIOBJ previous = SelectObject(dc, font);
+    if (glyph) natural = collapsed ? shellExpandSize : shellCollapseSize;
+    else if (!shellStyle && explorer && themePartSize) {
+        SIZE native;
+        if (SUCCEEDED(themePartSize(explorer, dc, part, 1, NULL, TS_TRUE, &native)) &&
+            native.cx > 0 && native.cy > 0 && native.cx <= 128 && native.cy <= 128) natural = native;
+    }
+    width = natural.cx; height = natural.cy;
+    /* Keep native pixels whenever they fit, and preserve the aspect ratio in
+       compact headers. In particular, never squeeze a round glyph to 17x18. */
+    if (height > availableHeight) { width = width * availableHeight / height; height = availableHeight; }
+    if (width > availableWidth) { height = height * availableWidth / width; width = availableWidth; }
+    arrow.right = rect->right - 4;
+    arrow.left = arrow.right - width;
+    arrow.top = rect->top + (availableHeight - height) / 2;
+    arrow.bottom = arrow.top + height;
     theme_panel(dc, rect, TRUE);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, headerColor);
     label.left += 10;
-    label.right -= 30;
+    label.right = arrow.left - 4;
     DrawTextW(dc, text, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    arrow.left = arrow.right - 25;
-    InflateRect(&arrow, -4, -4);
-    if (collapsed ? shellExpand != NULL : shellCollapse != NULL) {
-        DrawIconEx(dc, arrow.left, arrow.top, collapsed ? shellExpand : shellCollapse,
+    if (glyph) {
+        DrawIconEx(dc, arrow.left, arrow.top, glyph,
             arrow.right - arrow.left, arrow.bottom - arrow.top, 0, NULL, DI_NORMAL);
-    } else if (shellStyle || !explorer || FAILED(drawTheme(explorer, dc, collapsed ? EBP_NORMALGROUPEXPAND : EBP_NORMALGROUPCOLLAPSE, 1, &arrow, NULL))) {
+    } else if (shellStyle || !explorer || FAILED(drawTheme(explorer, dc, part, 1, &arrow, NULL))) {
         POINT points[3];
         HPEN pen = CreatePen(PS_SOLID, 1, headerColor);
         HGDIOBJ oldPen = SelectObject(dc, pen);
